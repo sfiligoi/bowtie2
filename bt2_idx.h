@@ -1905,64 +1905,64 @@ public:
 	 * Count for 'a' goes in arrs[0], 'c' in arrs[1], etc.
 	 */
 	inline void countUpToEx(const SideLocus& l, TIndexOffU* arrs) const {
-                const uint8_t *side = l.side(this->ebwt());
+		const uint8_t *side = l.side(this->ebwt());
+		const int lby = l._by;
 
-#if 0
-		//int i = 0;
+		int i = 0;
+
 		// Count occurrences of each nucleotide in each 64-bit word using
-		// bit trickery; note: this semms to slow thing down
-		// in practice.  If you uncomment
+		// bit trickery; note: this seems does not seem to lend a
+		// significant boost to performance in practice.  If you comment
 		// out this whole loop (which won't affect correctness - it will
 		// just cause the following loop to take up the slack) then runtime
-		// increases noticeably. Someday the countInU64() and pop()
+		// does not change noticeably. Someday the countInU64() and pop()
 		// functions should be vectorized/SSE-ized in case that helps.
 
 #ifdef POPCNT_CAPABILITY
 		if (_usePOPCNTinstruction) {
-			for(; i+7 < l._by; i += 8) {
+			for(; i+7 < lby; i += 8) {
 				countInU64Ex<USE_POPCNT_INSTRUCTION>(*(uint64_t*)&side[i], arrs);
 			}
 		}
 		else {
-			for(; i+7 < l._by; i += 8) {
+			for(; i+7 < lby; i += 8) {
 				countInU64Ex<USE_POPCNT_GENERIC>(*(uint64_t*)&side[i], arrs);
 			}
 		}
 #else
-		for(; i+7 < l._by; i += 8) {
+		for(; i+7 < lby; i += 8) {
 			countInU64Ex(*(uint64_t*)&side[i], arrs);
 		}
 #endif
 
-#endif
+		if (i<lby) {
+			uint32_t a0 = 0;
+			uint32_t a1 = 0;
+			uint32_t a2 = 0;
+			uint32_t a3 = 0;
 
-                uint32_t a0 = 0;
-                uint32_t a1 = 0;
-                uint32_t a2 = 0;
-                uint32_t a3 = 0;
-
-		// Count occurences of nucleotides in the rest of the side (using LUT)
-		// Many cache misses on following lines (~20K)
-		const int lby = l._by;
-		for(int i = 0; i < lby; i++) {
-                        const uint8_t * const  mylut = cCntLUT_4_t[0][side[i]];
-			a0 += mylut[0];
-			a1 += mylut[1];
-			a2 += mylut[2];
-			a3 += mylut[3];
+			// Count occurences of nucleotides in the rest of the side (using LUT)
+			// Many cache misses on following lines (~20K)
+			for(; i < lby; i++) {
+				const uint8_t * const  mylut = cCntLUT_4_t[0][side[i]];
+				a0 += mylut[0];
+				a1 += mylut[1];
+				a2 += mylut[2];
+				a3 += mylut[3];
+			}
+			arrs[0] += a0;
+			arrs[1] += a1;
+			arrs[2] += a2;
+			arrs[3] += a3;
 		}
 		// Count occurences of c in the rest of the byte
 		if(l._bp > 0) {
-                        const uint8_t * const mylut = cCntLUT_4_t[(int)l._bp][side[lby]];
-                        a0 += mylut[0];
-                        a1 += mylut[1];
-                        a2 += mylut[2];
-                        a3 += mylut[3];
+			const uint8_t * const mylut = cCntLUT_4_t[(int)l._bp][side[lby]];
+			arrs[0] += mylut[0];
+			arrs[1] += mylut[1];
+			arrs[2] += mylut[2];
+			arrs[3] += mylut[3];
 		}
-                arrs[0] += a0;
-                arrs[1] += a1;
-                arrs[2] += a2;
-                arrs[3] += a3;
 	}
 
 #ifndef NDEBUG
