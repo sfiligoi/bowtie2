@@ -1910,6 +1910,7 @@ public:
 
 		int i = 0;
 
+#if 0
 		// Count occurrences of each nucleotide in each 64-bit word using
 		// bit trickery; note: this seems does not seem to lend a
 		// significant boost to performance in practice.  If you comment
@@ -1933,6 +1934,8 @@ public:
 		for(; i+7 < lby; i += 8) {
 			countInU64Ex(*(uint64_t*)&side[i], arrs);
 		}
+#endif
+
 #endif
 
 		if (i<lby) {
