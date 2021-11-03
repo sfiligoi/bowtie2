@@ -322,6 +322,7 @@ void Ebwt::readIntoMemory(
 	}
 
 	_ebwt.reset();
+        _cntebwt16.reset();
 	if(_useMm) {
 #ifdef BOWTIE_MM
 		_ebwt.init((uint8_t*)(mmFile[0] + bytesRead), eh->_ebwtTotLen, false);
@@ -355,20 +356,26 @@ void Ebwt::readIntoMemory(
 			}
 		}
 		if(shmemLeader) {
+			_cntebwt16.init(new uint32_t[(eh->_ebwtTotLen)/16], (eh->_ebwtTotLen)/16, true);
+
 			// Read ebwt from primary stream
 			uint64_t bytesLeft = eh->_ebwtTotLen;
-			char *pebwt = (char*)this->ebwt();
+			uint8_t *pebwt = this->ebwt();
+                        uint8_t * const sebwt = pebwt; // keep track where it started
+                        uint32_t *pcntebwt16 = this->cntebwt16();
 
 			while (bytesLeft>0){
-				size_t r = MM_READ(_in1, (void *)pebwt, bytesLeft);
-				if(MM_IS_IO_ERR(_in1,r,bytesLeft)) {
+                                const uint64_t bytesToRead = std::min(bytesLeft,(uint64_t)(16*1024)); // small enough to fit in cache)
+				size_t r = MM_READ(_in1, (void *)pebwt, bytesToRead);
+				if(MM_IS_IO_ERR(_in1,r,bytesToRead)) {
 					cerr << "Error reading _ebwt[] array: " << r << ", "
-						 << bytesLeft << gLastIOErrMsg << endl;
+						 << bytesToRead << gLastIOErrMsg << endl;
 					throw 1;
 				} else if (r == 0) {
 					cerr << "Error reading _ebwt[] array: no more data" << endl;
 					throw 1;
 				}
+                                sumCntEbwt16(pcntebwt16, sebwt, (pebwt-sebwt), r);
 				pebwt += r;
 				bytesLeft -= r;
 			}

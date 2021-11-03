@@ -511,6 +511,7 @@ public:
 		_eftab(EBWT_CAT),			\
 		_offs(EBWT_CAT),			\
 		_ebwt(EBWT_CAT),			\
+		_cntebwt16(EBWT_CAT),			\
 		_useMm(false),				\
 		useShmem_(false),			\
 		_refnames(EBWT_CAT),			\
@@ -1175,6 +1176,7 @@ public:
 	inline TIndexOffU*   plen()              { return _plen.get(); }
 	inline TIndexOffU*   rstarts()           { return _rstarts.get(); }
 	inline uint8_t*    ebwt()              { return _ebwt.get(); }
+	inline uint32_t*   cntebwt16()		 {return _cntebwt16.get();}
 	inline const TIndexOffU* fchr() const    { return _fchr.get(); }
 	inline const TIndexOffU* ftab() const    { return _ftab.get(); }
 	inline const TIndexOffU* eftab() const   { return _eftab.get(); }
@@ -1182,6 +1184,7 @@ public:
 	inline const TIndexOffU* plen() const    { return _plen.get(); }
 	inline const TIndexOffU* rstarts() const { return _rstarts.get(); }
 	inline const uint8_t*  ebwt() const    { return _ebwt.get(); }
+	inline const uint32_t*  cntebwt16() const { return _cntebwt16.get(); }
 	bool        verbose() const      { return _verbose; }
 	bool        sanityCheck() const  { return _sanity; }
 	EList<string>& refnames()        { return _refnames; }
@@ -1900,17 +1903,103 @@ public:
 	}
 
 	/**
+	 * Pre-process the counter in 16-element chuncks.
+	 * Must be run from low ot high, unless completely aligned to 16x
+	 **/ 
+	inline static void sumCntEbwt16(uint32_t *pcntlut, uint8_t *sebwt, 
+	                                size_t debwt, size_t add_data) {
+		size_t start_delta16 = debwt/16; // may need to compute partials from before
+		size_t end_delta16 = (debwt+add_data)/16;
+		for (size_t i=start_delta16; i<end_delta16; i++) {
+			const size_t i0 = i*16;
+			uint32_t sum = 0;
+			for(size_t e=0; e < 16; e++) {
+				// Each val is in the 0-4 range, and we have 8 bit... plenty of space for partial sum
+				sum += cCntLUT_4_tp[0][sebwt[i0+e]];
+			}
+			pcntlut[i] = sum;
+		}
+	}
+
+	/**
 	 * Counts the number of occurrences of all four nucleotides in the
 	 * given side up to (but not including) the given byte/bitpair (by/bp).
 	 * Count for 'a' goes in arrs[0], 'c' in arrs[1], etc.
 	 */
-	inline void countUpToEx(const SideLocus& l, TIndexOffU* arrs) const {
+	inline void countUpToExCnt(const SideLocus& l, TIndexOffU* arrs) const {
+		const uint32_t * const start_cntebwt16 = this->cntebwt16();
+		const uint8_t * const start_ebwt = this->ebwt();
+		const uint8_t * const side = l.side(start_ebwt);
+		const size_t side_d = side-start_ebwt;
+		const int side_d_mod16 = side_d%16;
+		// will add if less than 8 elements, else we will substract
+		const size_t side_d16 = side_d/16 + ((side_d_mod16>8) ? 1 : 0);
+		const size_t side_d_end = side_d+l._by;
+		const int side_d_end_mod16 = side_d_end%16;
+		// we may not have the next element, so just add
+		const size_t side_d16_end = side_d_end/16;
+
+		uint64_t a0 = 0;
+		uint64_t a1 = 0;
+		uint64_t a2 = 0;
+		uint64_t a3 = 0;
+
+		// Count occurences of nucleotides using pre-computed cntebwt16
+		for (size_t d16=side_d16; d16<side_d16_end; d16++) {
+			const uint32_t p = start_cntebwt16[d16];
+			// plenty of spare bits, will divide at the end
+			a0 += p & 0x000000ff;
+			a1 += p & 0x0000ff00;
+			a2 += p & 0x00ff0000;
+			a3 += p & 0xff000000;
+		}
+
+		if (side_d_mod16>8) {
+			// Count occurences of nucleotides before the first pre-computed
+			for(int i=side_d_mod16; i < 16; i++) {
+				const uint32_t p = cCntLUT_4_tp[0][*(side+(i-side_d_mod16))];
+				// plenty of spare bits, will divide at the end
+				a0 += p & 0x000000ff;
+				a1 += p & 0x0000ff00;
+				a2 += p & 0x00ff0000;
+				a3 += p & 0xff000000;
+			}
+		} else {
+			// Subtract the excess nucleotides in the initial sequence
+			// We (may) added more than needed from the pre-computed values
+			for(int i=0; i < side_d_mod16; i++) {
+				const uint32_t p = cCntLUT_4_tp[0][*(side+(i-side_d_mod16))];
+				a0 -= p & 0x000000ff;
+				a1 -= p & 0x0000ff00;
+				a2 -= p & 0x00ff0000;
+				a3 -= p & 0xff000000;
+			}
+		}
+
+		const uint8_t * const side_end = side+l._by;
+		// Count any occurences of nucleotides after the last pre-computed
+		for(int i=0; i < side_d_end_mod16; i++) {
+			const uint32_t p = cCntLUT_4_tp[0][*(side_end+(i-side_d_end_mod16))];
+			// plenty of spare bits, will divide at the end
+			a0 += p & 0x000000ff;
+			a1 += p & 0x0000ff00;
+			a2 += p & 0x00ff0000;
+			a3 += p & 0xff000000;
+		}
+
+		arrs[0] += a0;
+		arrs[1] += a1 >> 8;
+		arrs[2] += a2 >> 16;
+		arrs[3] += a3 >> 24;
+	}
+
+
+	inline void countUpToExDirect(const SideLocus& l, TIndexOffU* arrs) const {
 		const uint8_t *side = l.side(this->ebwt());
 		const int lby = l._by;
 
 		int i = 0;
 
-#if 0
 		// Count occurrences of each nucleotide in each 64-bit word using
 		// bit trickery; note: this seems does not seem to lend a
 		// significant boost to performance in practice.  If you comment
@@ -1936,60 +2025,55 @@ public:
 		}
 #endif
 
-#endif
 
 		if (i<lby) {
-			uint32_t a0 = 0;
-			uint32_t a1 = 0;
-			uint32_t a2 = 0;
-			uint32_t a3 = 0;
+			uint64_t a0 = 0;
+			uint64_t a1 = 0;
+			uint64_t a2 = 0;
+			uint64_t a3 = 0;
 
 			// Count occurences of nucleotides in the rest of the side (using LUT)
-			// Many cache misses on following lines (~20K) 
-
-			// Use 64-bit loads of side, as they are more effcient
-			for(; i+7 < lby; i += 8) {
-				const uint64_t i_p8 = ((const uint64_t *)(&(side[i])))[0];
-				uint32_t p0 = cCntLUT_4_tp[0][ i_p8        & 0xff];
-				uint32_t p1 = cCntLUT_4_tp[0][(i_p8 >>  8 )& 0xff];
-				uint32_t p2 = cCntLUT_4_tp[0][(i_p8 >> 16 )& 0xff];
-				uint32_t p3 = cCntLUT_4_tp[0][(i_p8 >> 24 )& 0xff];
-				// Each val is in the 0-4 range, and we have 8 bit... plenty of space for partial sum
-				uint32_t psum = p0 + p1 + p2 + p3;
-				p0 = cCntLUT_4_tp[0][(i_p8 >> 32 )& 0xff];
-				p1 = cCntLUT_4_tp[0][(i_p8 >> 40 )& 0xff];
-				p2 = cCntLUT_4_tp[0][(i_p8 >> 48 )& 0xff];
-				p3 = cCntLUT_4_tp[0][(i_p8 >> 56 )& 0xff];
-				psum += p0 + p1 + p2 + p3;
- 
-				const uint32_t psumhi = psum >> 16;
-				a0 += psum & 0x000000ff;
-				a1 += psum & 0x0000ff00;
-				a2 += psumhi & 0x000000ff;
-				a3 += psumhi & 0x0000ff00;
-			}
-
 			for(; i < lby; i++) {
 				const uint32_t p = cCntLUT_4_tp[0][side[i]];
-				const uint32_t phi = p >> 16;
+				// plenty of spare bits, will divide at the end
 				a0 += p & 0x000000ff;
 				a1 += p & 0x0000ff00;
-				a2 += phi & 0x000000ff;
-				a3 += phi & 0x0000ff00;
+				a2 += p & 0x00ff0000;
+				a3 += p & 0xff000000;
 			}
 			arrs[0] += a0;
 			arrs[1] += a1 >> 8;
-			arrs[2] += a2;
-			arrs[3] += a3 >> 8;
+			arrs[2] += a2 >> 16;
+			arrs[3] += a3 >> 24;
+		}
+	}
+
+	inline void countUpToEx(const SideLocus& l, TIndexOffU* arrs) const {
+		if (l._by>0) {
+			if (this->cntebwt16()!=NULL) {
+				countUpToExCnt(l, arrs);
+#if 0
+                                TIndexOffU arrs1[4];
+                                countUpToExDirect(l, arrs1);
+                                printf("arrs[0] %u == %u\n", (unsigned int) arrs[0],(unsigned int) arrs1[0]);
+                                printf("arrs[1] %u == %u\n", (unsigned int) arrs[1],(unsigned int) arrs1[1]);
+                                printf("arrs[2] %u == %u\n", (unsigned int) arrs[2],(unsigned int) arrs1[2]);
+                                printf("arrs[3] %u == %u\n", (unsigned int) arrs[3],(unsigned int) arrs1[3]);
+#endif
+			} else {
+				countUpToExDirect(l, arrs);
+			}
 		}
 		// Count occurences of c in the rest of the byte
 		if(l._bp > 0) {
-			const uint32_t p = cCntLUT_4_tp[(int)l._bp][side[lby]];
+			const uint8_t *side = l.side(this->ebwt());
+			const uint32_t p = cCntLUT_4_tp[(int)l._bp][side[(int)l._by]];
 			arrs[0] +=  p & 0x000000ff;
 			arrs[1] += (p & 0x0000ff00) >> 8;
 			arrs[2] += (p & 0x00ff0000) >> 16;
 			arrs[3] += (p & 0xff000000) >> 24;
-		}
+                }
+
 	}
 
 #ifndef NDEBUG
@@ -2449,6 +2533,8 @@ public:
 	// _ebwt is the Extended Burrows-Wheeler Transform itself, and thus
 	// is at least as large as the input sequence.
 	APtrWrap<uint8_t> _ebwt;
+	// pre-processed sums of cCntLUT x16
+	APtrWrap<uint32_t> _cntebwt16;
 	bool       _useMm;        /// use memory-mapped files to hold the index
 	bool       useShmem_;     /// use shared memory to hold large parts of the index
 	EList<string> _refnames; /// names of the reference sequences
