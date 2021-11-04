@@ -1921,6 +1921,25 @@ public:
 		}
 	}
 
+
+	inline void prefetchExCnt(const SideLocus& l) const {
+                const uint32_t * const start_cntebwt16 = this->cntebwt16();
+                const uint8_t * const start_ebwt = this->ebwt();
+                const uint8_t * const side = l.side(start_ebwt);
+                const size_t side_d = side-start_ebwt;
+                const size_t side_d16 = side_d/16;
+                const size_t side_d_end = side_d+l._by;
+                const size_t side_d16_end = side_d_end/16;
+
+                for (size_t d16=side_d16; d16<side_d16_end; d16+=16) { // each cache line is 64 bytes
+		  __builtin_prefetch(start_cntebwt16+d16);
+                }
+                __builtin_prefetch(start_cntebwt16+side_d16_end-1);
+                __builtin_prefetch(start_ebwt+side_d);
+                __builtin_prefetch(start_ebwt+side_d_end-1);
+
+        }
+
 	/**
 	 * Counts the number of occurrences of all four nucleotides in the
 	 * given side up to (but not including) the given byte/bitpair (by/bp).
@@ -2118,6 +2137,7 @@ public:
 		{
 			SideLocus ltop, lbot;
 			SideLocus::initFromTopBot(top, bot, _eh, ebwt(), ltop, lbot);
+			prefetchExCnt(ltop); prefetchExCnt(lbot);
 			mapLFEx(ltop, lbot, tops, bots ASSERT_ONLY(, overrideSanity));
 		}
 
