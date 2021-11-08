@@ -534,14 +534,16 @@ public:
 	     bool startVerbose, // = false,
 	     bool passMemExc, // = false,
 	     bool sanityCheck) : // = false) :
-		Ebwt_INITS
+		Ebwt_INITS,
+		_eh(),
+		packed_(false),
+		_packed_idx(false)
 	{
 		assert(!useMm || !useShmem);
 #ifdef POPCNT_CAPABILITY
 		ProcessorSupport ps;
 		_usePOPCNTinstruction = ps.POPCNTenabled();
 #endif
-		packed_ = false;
 		_useMm = useMm;
 		useShmem_ = useShmem;
 		_in1Str = in + ".1." + gEbwt_ext;
@@ -608,7 +610,10 @@ public:
 		offRate,
 		ftabChars,
 		color,
-		refparams.reverse == REF_READ_REVERSE)
+		refparams.reverse == REF_READ_REVERSE),
+		packed_(packed),
+		_packed_idx(false)
+
 	{
 #ifdef POPCNT_CAPABILITY
 		ProcessorSupport ps;
@@ -616,7 +621,6 @@ public:
 #endif
 		_in1Str = file + ".1." + gEbwt_ext;
 		_in2Str = file + ".2." + gEbwt_ext;
-		packed_ = packed;
 		// Open output files
 		ofstream fout1(_in1Str.c_str(), ios::binary);
 		if(!fout1.good()) {
@@ -1654,11 +1658,24 @@ public:
 		// Now factor in the occ[] count at the side break
 		const uint8_t *acgt8 = side + _eh._sideBwtSz;
 		const TIndexOffU *acgt = reinterpret_cast<const TIndexOffU*>(acgt8);
-		assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->_eh._numSides * this->_eh._sideBwtLen); // b/c it's used as padding
-		assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->_eh._len);
-		assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->_eh._len);
-		assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->_eh._len);
-		ret = endianizeU<TIndexOffU>(acgt[c], _switchEndian) + cCnt + this->fchr()[c];
+#if OFF_SIZE==8
+		if (_packed_idx) {
+			const TIndexOffU mask55 = (1ul <<55) -1;
+			assert_leq(acgt[0]&mask55, this->_eh._numSides * this->_eh._sideBwtLen); // b/c it's used as padding
+			assert_leq(acgt[1]&mask55, this->_eh._len);
+                        assert_leq(acgt[2]&mask55, this->_eh._len);
+                        assert_leq(acgt[3]&mask55, this->_eh._len);
+                        ret = (acgt[c]&mask55) + cCnt + this->fchr()[c];
+		} else {
+#else
+		if (true) {
+#endif
+			assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->_eh._numSides * this->_eh._sideBwtLen); // b/c it's used as padding
+			assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->_eh._len);
+			assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->_eh._len);
+			assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->_eh._len);
+			ret = endianizeU<TIndexOffU>(acgt[c], _switchEndian) + cCnt + this->fchr()[c];
+		}
 #ifndef NDEBUG
 		assert_leq(ret, this->fchr()[c+1]); // can't have jumpded into next char's section
 		if(c == 0) {
@@ -1704,18 +1721,36 @@ public:
 			}
 			// Now factor in the occ[] count at the side break
 			const TIndexOffU *acgt = reinterpret_cast<const TIndexOffU*>(side + _eh._sideBwtSz);
-			assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->fchr()[1] + this->_eh.sideBwtLen());
-			assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->fchr()[2]-this->fchr()[1]);
-			assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->fchr()[3]-this->fchr()[2]);
-			assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->fchr()[4]-this->fchr()[3]);
-			assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->_eh._len + this->_eh.sideBwtLen());
-			assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->_eh._len);
-			assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->_eh._len);
-			assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->_eh._len);
-			cntsUpto[0] += (endianizeU<TIndexOffU>(acgt[0], _switchEndian) + this->fchr()[0]);
-			cntsUpto[1] += (endianizeU<TIndexOffU>(acgt[1], _switchEndian) + this->fchr()[1]);
-			cntsUpto[2] += (endianizeU<TIndexOffU>(acgt[2], _switchEndian) + this->fchr()[2]);
-			cntsUpto[3] += (endianizeU<TIndexOffU>(acgt[3], _switchEndian) + this->fchr()[3]);
+#if OFF_SIZE==8 
+			if (_packed_idx) {
+				const TIndexOffU mask55 = (1ul <<55) -1;
+				assert_leq(acgt[0]&mask55, this->fchr()[1] + this->_eh.sideBwtLen());
+				assert_leq(acgt[1]&mask55, this->fchr()[2]-this->fchr()[1]);
+				assert_leq(acgt[2]&mask55, this->fchr()[3]-this->fchr()[2]);
+				assert_leq(acgt[3]&mask55, this->fchr()[4]-this->fchr()[3]);
+				assert_leq(acgt[0]&mask55, this->_eh._len + this->_eh.sideBwtLen());
+				assert_leq(acgt[1]&mask55, this->_eh._len);
+				assert_leq(acgt[2]&mask55, this->_eh._len);
+				assert_leq(acgt[3]&mask55, this->_eh._len);
+				for (int c=0; c<4; c++) {
+					cntsUpto[c] += (acgt[c]&mask55) + this->fchr()[c];
+				}
+			} else {
+#else           
+			if (true) {
+#endif
+				assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->fchr()[1] + this->_eh.sideBwtLen());
+				assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->fchr()[2]-this->fchr()[1]);
+				assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->fchr()[3]-this->fchr()[2]);
+				assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->fchr()[4]-this->fchr()[3]);
+				assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->_eh._len + this->_eh.sideBwtLen());
+				assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->_eh._len);
+				assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->_eh._len);
+				assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->_eh._len);
+				for (int c=0; c<4; c++) {
+					cntsUpto[c] += (endianizeU<TIndexOffU>(acgt[c], _switchEndian) + this->fchr()[c]);
+				}
+			}
 			masks[0].resize(num);
 			masks[1].resize(num);
 			masks[2].resize(num);
@@ -1781,18 +1816,36 @@ public:
 		const uint8_t *side = l.side(this->ebwt());
 		const uint8_t *acgt16 = side + this->_eh._sideSz - OFF_SIZE*4;
 		const TIndexOffU *acgt = reinterpret_cast<const TIndexOffU*>(acgt16);
-		assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->fchr()[1] + this->_eh.sideBwtLen());
-		assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->fchr()[2]-this->fchr()[1]);
-		assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->fchr()[3]-this->fchr()[2]);
-		assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->fchr()[4]-this->fchr()[3]);
-		assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->_eh._len + this->_eh.sideBwtLen());
-		assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->_eh._len);
-		assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->_eh._len);
-		assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->_eh._len);
-		arrs[0] += (endianizeU<TIndexOffU>(acgt[0], _switchEndian) + this->fchr()[0]);
-		arrs[1] += (endianizeU<TIndexOffU>(acgt[1], _switchEndian) + this->fchr()[1]);
-		arrs[2] += (endianizeU<TIndexOffU>(acgt[2], _switchEndian) + this->fchr()[2]);
-		arrs[3] += (endianizeU<TIndexOffU>(acgt[3], _switchEndian) + this->fchr()[3]);
+#if OFF_SIZE==8 
+                if (_packed_idx) {
+			const TIndexOffU mask55 = (1ul <<55) -1;
+			assert_leq(acgt[0]&mask55, this->fchr()[1] + this->_eh.sideBwtLen());
+			assert_leq(acgt[1]&mask55, this->fchr()[2]-this->fchr()[1]);
+			assert_leq(acgt[2]&mask55, this->fchr()[3]-this->fchr()[2]);
+			assert_leq(acgt[3]&mask55, this->fchr()[4]-this->fchr()[3]);
+			assert_leq(acgt[0]&mask55, this->_eh._len + this->_eh.sideBwtLen());
+			assert_leq(acgt[1]&mask55, this->_eh._len);
+			assert_leq(acgt[2]&mask55, this->_eh._len);
+			assert_leq(acgt[3]&mask55, this->_eh._len);
+			for (int c=0; c<4; c++) {
+				arrs[c] += (acgt[c]&mask55) + this->fchr()[c];
+			}
+		} else {
+#else           
+		if (true) {
+#endif
+			assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->fchr()[1] + this->_eh.sideBwtLen());
+			assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->fchr()[2]-this->fchr()[1]);
+			assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->fchr()[3]-this->fchr()[2]);
+			assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->fchr()[4]-this->fchr()[3]);
+			assert_leq(endianizeU<TIndexOffU>(acgt[0], _switchEndian), this->_eh._len + this->_eh.sideBwtLen());
+			assert_leq(endianizeU<TIndexOffU>(acgt[1], _switchEndian), this->_eh._len);
+			assert_leq(endianizeU<TIndexOffU>(acgt[2], _switchEndian), this->_eh._len);
+			assert_leq(endianizeU<TIndexOffU>(acgt[3], _switchEndian), this->_eh._len);
+			for (int c=0; c<4; c++) {
+				arrs[c] += (endianizeU<TIndexOffU>(acgt[c], _switchEndian) + this->fchr()[c]);
+			}
+		}
 		WITHIN_FCHR(arrs);
 	}
 
@@ -1805,36 +1858,60 @@ public:
 	 *
 	 * Function gets 11.09% in profile
 	 */
-	inline TIndexOffU countUpTo(const SideLocus& l, int c) const { // @double-check
+	inline TIndexOffU countUpToExplicit(const uint8_t *side, uint32_t by , int c) const { // @double-check
 		// Count occurrences of c in each 64-bit (using bit trickery);
 		// Someday countInU64() and pop() functions should be
 		// vectorized/SSE-ized in case that helps.
 		TIndexOffU cCnt = 0;
-		const uint8_t *side = l.side(this->ebwt());
-		int i = 0;
+		uint32_t i = 0;
 #ifdef POPCNT_CAPABILITY
 		if ( _usePOPCNTinstruction) {
-			for(; i + 7 < l._by; i += 8) {
+			for(; i + 7 < by; i += 8) {
 				cCnt += countInU64<USE_POPCNT_INSTRUCTION>(c, *(uint64_t*)&side[i]);
 			}
 		}
 		else {
-			for(; i + 7 < l._by; i += 8) {
+			for(; i + 7 < by; i += 8) {
 				cCnt += countInU64<USE_POPCNT_GENERIC>(c, *(uint64_t*)&side[i]);
 			}
 		}
 #else
-		for(; i + 7 < l._by; i += 8) {
+		for(; i + 7 < by; i += 8) {
 			cCnt += countInU64(c, *(uint64_t*)&side[i]);
 		}
 #endif
 		// Count occurences of c in the rest of the side (using LUT)
-		for(; i < l._by; i++) {
+		for(; i < by; i++) {
 			cCnt += cCntLUT_4[0][c][side[i]];
 		}
+		return cCnt;
+	}
+
+	inline TIndexOffU countUpTo(const SideLocus& l, int c) const { // @double-check
+		const uint8_t *side = l.side(this->ebwt());
+		uint32_t by = l._by;
+
+		TIndexOffU cCnt = 0;
+
+#if OFF_SIZE==8
+		if (_packed_idx && (by>63)) {
+			uint64_t *side64 = (uint64_t *)side;
+			uint64_t *idx = side64+12;
+
+			// we pre-computed the first 64 bytes and stored it in part of idx
+			cCnt += (idx[c]>>55);
+
+			cCnt += countUpToExplicit(side+64, by-64, c);
+                } else {
+#else
+                if (true) {
+#endif
+                        cCnt += countUpToExplicit(side, by, c);
+                }
+
 		// Count occurences of c in the rest of the byte
 		if(l._bp > 0) {
-			cCnt += cCntLUT_4[(int)l._bp][c][side[i]];
+			cCnt += cCntLUT_4[(int)l._bp][c][side[by]];
 		}
 		return cCnt;
 	}
@@ -1903,8 +1980,8 @@ public:
 	 * given side up to (but not including) the given byte/bitpair (by/bp).
 	 * Count for 'a' goes in arrs[0], 'c' in arrs[1], etc.
 	 */
-	inline void countUpToEx(const SideLocus& l, TIndexOffU* arrs) const {
-		int i = 0;
+	inline void countUpToExExplicit(const uint8_t *side, uint32_t by , TIndexOffU* arrs) const {
+		uint32_t i = 0;
 		// Count occurrences of each nucleotide in each 64-bit word using
 		// bit trickery; note: this seems does not seem to lend a
 		// significant boost to performance in practice.  If you comment
@@ -1912,40 +1989,102 @@ public:
 		// just cause the following loop to take up the slack) then runtime
 		// does not change noticeably. Someday the countInU64() and pop()
 		// functions should be vectorized/SSE-ized in case that helps.
-		const uint8_t *side = l.side(this->ebwt());
 
 #ifdef POPCNT_CAPABILITY
 		if (_usePOPCNTinstruction) {
-			for(; i+7 < l._by; i += 8) {
+			for(; i+7 < by; i += 8) {
 				countInU64Ex<USE_POPCNT_INSTRUCTION>(*(uint64_t*)&side[i], arrs);
 			}
 		}
 		else {
-			for(; i+7 < l._by; i += 8) {
+			for(; i+7 < by; i += 8) {
 				countInU64Ex<USE_POPCNT_GENERIC>(*(uint64_t*)&side[i], arrs);
 			}
 		}
 #else
-		for(; i+7 < l._by; i += 8) {
+		for(; i+7 < by; i += 8) {
 			countInU64Ex(*(uint64_t*)&side[i], arrs);
 		}
 #endif
 		// Count occurences of nucleotides in the rest of the side (using LUT)
 		// Many cache misses on following lines (~20K)
-		for(; i < l._by; i++) {
+		for(; i < by; i++) {
 			arrs[0] += cCntLUT_4[0][0][side[i]];
 			arrs[1] += cCntLUT_4[0][1][side[i]];
 			arrs[2] += cCntLUT_4[0][2][side[i]];
 			arrs[3] += cCntLUT_4[0][3][side[i]];
 		}
+	}
+
+	inline void countUpToEx(const SideLocus& l, TIndexOffU* arrs) const {
+		const uint8_t *side = l.side(this->ebwt());
+		uint32_t by = l._by;
+
+#if OFF_SIZE==8
+		if (_packed_idx && (by>63)) {
+			uint64_t *side64 = (uint64_t *)side;
+			uint64_t *idx = side64+12;
+
+			// we pre-computed the first 64 bytes and stored it in part of idx
+			for (int c=0; c<4; c++) {
+				arrs[c] += (idx[c]>>55);
+			}
+			countUpToExExplicit(side+64, by-64, arrs);
+		} else {
+#else
+		if (true) {
+#endif
+			countUpToExExplicit(side, by, arrs);
+		}
+
 		// Count occurences of c in the rest of the byte
 		if(l._bp > 0) {
-			arrs[0] += cCntLUT_4[(int)l._bp][0][side[i]];
-			arrs[1] += cCntLUT_4[(int)l._bp][1][side[i]];
-			arrs[2] += cCntLUT_4[(int)l._bp][2][side[i]];
-			arrs[3] += cCntLUT_4[(int)l._bp][3][side[i]];
+			arrs[0] += cCntLUT_4[(int)l._bp][0][side[by]];
+			arrs[1] += cCntLUT_4[(int)l._bp][1][side[by]];
+			arrs[2] += cCntLUT_4[(int)l._bp][2][side[by]];
+			arrs[3] += cCntLUT_4[(int)l._bp][3][side[by]];
 		}
 	}
+
+
+#if OFF_SIZE==8
+	// Pack the index
+	// Returns false if not possible
+	inline bool packIdx(uint8_t *side) {
+		TIndexOffU cnt64[4];
+		cnt64[0] = 0; cnt64[1] = 0; cnt64[2] = 0; cnt64[3] = 0;
+		countUpToExExplicit(side, 64, cnt64);
+
+		// now pack in the top 9 bits
+		uint64_t *side64 = (uint64_t *)side;
+		uint64_t *idx = side64+12; 
+		uint64_t idxNative[4]; // convert to native format in the process
+		for (int c=0; c<4; c++) {
+			idxNative[c] = endianizeU<TIndexOffU>(idx[c], _switchEndian);
+		}
+
+		const TIndexOffU max9 = (1lu <<  9) - 1;
+		const uint64_t max55 =  (1lu << 55) - 1;
+		if (
+			// Should never exceed 9 bits, but better be on the safe side
+			(cnt64[0]>max9)||(cnt64[1]>max9)||(cnt64[2]>max9)||(cnt64[3]>max9) ||
+			// need 9 bits, so make sure idx has space
+			(idxNative[0]>max55)||(idxNative[1]>max55)||(idxNative[2]>max55)||(idxNative[3]>max55)
+		   ) return false;
+
+		for (int c=0; c<4; c++) {
+			idx[c] = idxNative[c] | (cnt64[c] << 55);
+		}
+		return true;
+	}
+
+	inline bool unpackIdx(uint8_t *side) {
+		// TBD
+		// just throw for now
+		throw 1;
+	}
+
+#endif
 
 #ifndef NDEBUG
 	/**
@@ -2411,6 +2550,8 @@ public:
 	char *mmFile2_;
 	EbwtParams _eh;
 	bool packed_;
+	// if true, part of the index is a pre-commputed bit count
+	bool _packed_idx;
 
 	static const TIndexOffU default_bmax = OFF_MASK;
 	static const TIndexOffU default_bmaxMultSqrt = OFF_MASK;
@@ -2945,16 +3086,25 @@ void Ebwt::buildToDisk(
 			side += sideSz;
 			assert_leq(side, eh._ebwtTotSz);
 #ifdef BOWTIE_64BIT_INDEX
-			cpptr[(sideSz >> 3)-4] = endianizeU<TIndexOffU>(occSave[0], _switchEndian);
-			cpptr[(sideSz >> 3)-3] = endianizeU<TIndexOffU>(occSave[1], _switchEndian);
-			cpptr[(sideSz >> 3)-2] = endianizeU<TIndexOffU>(occSave[2], _switchEndian);
-			cpptr[(sideSz >> 3)-1] = endianizeU<TIndexOffU>(occSave[3], _switchEndian);
+			if (_packed_idx) {
+				const TIndexOffU mask55 = (1ul <<55) -1;
+				cpptr[(sideSz >> 3)-4] = occSave[0]&mask55;
+				cpptr[(sideSz >> 3)-3] = occSave[1]&mask55;
+				cpptr[(sideSz >> 3)-2] = occSave[2]&mask55;
+				cpptr[(sideSz >> 3)-1] = occSave[3]&mask55;
+			} else {
+				cpptr[(sideSz >> 3)-4] = endianizeU<TIndexOffU>(occSave[0], _switchEndian);
+				cpptr[(sideSz >> 3)-3] = endianizeU<TIndexOffU>(occSave[1], _switchEndian);
+				cpptr[(sideSz >> 3)-2] = endianizeU<TIndexOffU>(occSave[2], _switchEndian);
+				cpptr[(sideSz >> 3)-1] = endianizeU<TIndexOffU>(occSave[3], _switchEndian);
+			}
 #else
 			cpptr[(sideSz >> 2)-4] = endianizeU<TIndexOffU>(occSave[0], _switchEndian);
 			cpptr[(sideSz >> 2)-3] = endianizeU<TIndexOffU>(occSave[1], _switchEndian);
 			cpptr[(sideSz >> 2)-2] = endianizeU<TIndexOffU>(occSave[2], _switchEndian);
 			cpptr[(sideSz >> 2)-1] = endianizeU<TIndexOffU>(occSave[3], _switchEndian);
 #endif
+
 			occSave[0] = occ[0];
 			occSave[1] = occ[1];
 			occSave[2] = occ[2];

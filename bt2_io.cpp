@@ -322,6 +322,7 @@ void Ebwt::readIntoMemory(
 	}
 
 	_ebwt.reset();
+	_packed_idx = false;
 	if(_useMm) {
 #ifdef BOWTIE_MM
 		_ebwt.init((uint8_t*)(mmFile[0] + bytesRead), eh->_ebwtTotLen, false);
@@ -357,10 +358,17 @@ void Ebwt::readIntoMemory(
 		if(shmemLeader) {
 			// Read ebwt from primary stream
 			uint64_t bytesLeft = eh->_ebwtTotLen;
-			char *pebwt = (char*)this->ebwt();
+			uint8_t * const pebwtStart = (uint8_t*)this->ebwt();
+			uint8_t *pebwt = pebwtStart;
 
+#if OFF_SIZE==8
+			// We will try to  pre-compute the first 64 byte cache line
+			// and store it into the index section
+			_packed_idx = true;
+#endif
 			while (bytesLeft>0){
-				size_t r = MM_READ(_in1, (void *)pebwt, bytesLeft);
+				const uint64_t bytesToRead = std::min(bytesLeft,(uint64_t)(16*1024)); // small enough to fit in cache)
+				size_t r = MM_READ(_in1, (void *)pebwt, bytesToRead);
 				if(MM_IS_IO_ERR(_in1,r,bytesLeft)) {
 					cerr << "Error reading _ebwt[] array: " << r << ", "
 						 << bytesLeft << gLastIOErrMsg << endl;
@@ -369,6 +377,24 @@ void Ebwt::readIntoMemory(
 					cerr << "Error reading _ebwt[] array: no more data" << endl;
 					throw 1;
 				}
+#if OFF_SIZE==8
+				if (_packed_idx) {
+					uint64_t dt = pebwt-pebwtStart;
+					uint8_t *pstart = pebwtStart + (dt/128)*128; // nd to do a bloock at a time
+					for (uint8_t *p=pstart; (p+128)<=(pebwt+r); p+=128) {
+						bool failed = !packIdx(p);
+						if (failed) {
+							// revert to original version, if packing not possible
+							cerr << "WARNING: Packing of index failed" << endl;
+							for (uint8_t *pr=(uint8_t *)this->ebwt(); pr<p; pr+=(64*OFF_SIZE)) {
+								unpackIdx(pr);
+							}
+							_packed_idx = false;
+							break;
+						}
+					}
+				}
+#endif
 				pebwt += r;
 				bytesLeft -= r;
 			}
