@@ -2961,6 +2961,75 @@ public:
 	}
 };
 
+class ReadState {
+private:
+	// Thread-local cache for seed alignments
+	PtrWrap<AlignmentCache> scLocal;
+	// Thread-local cache for current seed alignments
+	AlignmentCache scCurrent;
+
+	// Instantiate an object for holding reporting-related parameters.
+	ReportingParams rp;
+	// Instantiate a mapping quality calculator
+	unique_ptr<Mapq> bmapq;
+
+	EList<Seed> seeds1, seeds2;
+
+public:
+	unique_ptr<PatternSourcePerThread> ps;
+	// Interfaces for alignment and seed caches
+	AlignmentCacheIface ca;
+
+	// Make a per-thread wrapper for the global MHitSink object.
+	AlnSinkWrap msinkwrap;
+
+	RandomSource rnd;
+
+	SwDriver sd;
+	PerReadMetrics prm;
+
+	SeedResults shs[2];
+
+	ReadState(int tid, PatternSourcePerThreadFactory& patsrcFact) 
+	: scLocal()
+	, scCurrent(seedCacheCurrentMB * 1024 * 1024, false)
+	, rp(
+                        (allHits ? std::numeric_limits<THitInt>::max() : khits), // -k
+                        mhits,             // -m/-M
+                        0,                 // penalty gap (not used now)
+                        msample,           // true -> -M was specified, otherwise assume -m
+                        gReportDiscordant, // report discordang paired-end alignments?
+                        gReportMixed)     // report unpaired alignments for paired reads?
+	, bmapq(new_mapq(mapqv, scoreMin, *multiseed_sc))
+	, seeds1(), seeds2()
+	, ps(patsrcFact.create())
+	, ca( &scCurrent,
+	      init_and_get_scLocal(scLocal).get(),
+	      msNoCache ? NULL : multiseed_ca)
+	, msinkwrap(*multiseed_msink,  // global sink
+                    rp,                // reporting parameters
+                    *bmapq,            // MAPQ calculator
+                    (size_t)tid)      // thread id
+	, rnd()
+	, sd(exactCacheCurrentMB * 1024 * 1024)
+	, prm()
+	// default initializer for shs is OK
+	{}
+
+	EList<Seed> *seeds(int idx) { return (idx==0) ? &seeds1 : &seeds2; }
+	Read* rds(int idx) { return (idx==0) ? &ps->read_a() : &ps->read_b(); }
+
+
+private:
+	static PtrWrap<AlignmentCache>& init_and_get_scLocal(PtrWrap<AlignmentCache> &scLocal) {
+		if(!msNoCache) {
+                        scLocal.init(new AlignmentCache(seedCacheLocalMB * 1024 * 1024, false));
+                }
+		return scLocal;
+	}
+
+};
+
 /**
  * Called once per thread.  Sets up per-thread pointers to the shared global
  * data structures, creates per-thread structures, then enters the alignment
@@ -3014,40 +3083,8 @@ static void multiseedSearchWorker(void *vp) {
 
 		//const BitPairReference& refs   = *multiseed_refs;
 		unique_ptr<PatternSourcePerThreadFactory> patsrcFact(createPatsrcFactory(patsrc, pp, tid));
-		unique_ptr<PatternSourcePerThread> ps(patsrcFact->create());
 
-		// Thread-local cache for seed alignments
-		PtrWrap<AlignmentCache> scLocal;
-		if(!msNoCache) {
-			scLocal.init(new AlignmentCache(seedCacheLocalMB * 1024 * 1024, false));
-		}
-		AlignmentCache scCurrent(seedCacheCurrentMB * 1024 * 1024, false);
-		// Thread-local cache for current seed alignments
-
-		// Interfaces for alignment and seed caches
-		AlignmentCacheIface ca(
-			&scCurrent,
-			scLocal.get(),
-			msNoCache ? NULL : multiseed_ca);
-
-		// Instantiate an object for holding reporting-related parameters.
-		ReportingParams rp(
-			(allHits ? std::numeric_limits<THitInt>::max() : khits), // -k
-			mhits,             // -m/-M
-			0,                 // penalty gap (not used now)
-			msample,           // true -> -M was specified, otherwise assume -m
-			gReportDiscordant, // report discordang paired-end alignments?
-			gReportMixed);     // report unpaired alignments for paired reads?
-
-		// Instantiate a mapping quality calculator
-		unique_ptr<Mapq> bmapq(new_mapq(mapqv, scoreMin, sc));
-
-		// Make a per-thread wrapper for the global MHitSink object.
-		AlnSinkWrap msinkwrap(
-			msink,         // global sink
-			rp,            // reporting parameters
-			*bmapq,        // MAPQ calculator
-			(size_t)tid);  // thread id
+		ReadState rstate(tid, *patsrcFact);
 
 		// Write dynamic-programming problem descriptions here
 		ofstream *dpLog = NULL, *dpLogOpp = NULL;
@@ -3061,15 +3098,13 @@ static void multiseedSearchWorker(void *vp) {
 		}
 
 		SeedAligner al;
-		SwDriver sd(exactCacheCurrentMB * 1024 * 1024);
 		SwAligner sw(dpLog), osw(dpLogOpp);
-		SeedResults shs[2];
 		OuterLoopMetrics olm;
 		SeedSearchMetrics sdm;
 		WalkMetrics wlm;
 		SwMetrics swmSeed, swmMate;
 		ReportingMetrics rpm;
-		RandomSource rnd, rndArb;
+		RandomSource rndArb;
 		SSEMetrics sseU8ExtendMet;
 		SSEMetrics sseU8MateMet;
 		SSEMetrics sseI16ExtendMet;
@@ -3105,10 +3140,6 @@ static void multiseedSearchWorker(void *vp) {
 
 		PerfMetrics metricsPt; // per-thread metrics object; for read-level metrics
 		BTString nametmp;
-		EList<Seed> seeds1, seeds2;
-		EList<Seed> *seeds[2] = { &seeds1, &seeds2 };
-
-		PerReadMetrics prm;
 
 		// Used by thread with threadid == 1 to measure time elapsed
 		time_t iTime = time(0);
@@ -3133,7 +3164,7 @@ static void multiseedSearchWorker(void *vp) {
 		int mergeival = 16;
 		bool done = false;
 		while(!done) {
-			pair<bool, bool> ret = ps->nextReadPair();
+			pair<bool, bool> ret = rstate.ps->nextReadPair();
 			bool success = ret.first;
 			done = ret.second;
 			if(!success && done) {
@@ -3141,15 +3172,15 @@ static void multiseedSearchWorker(void *vp) {
 			} else if(!success) {
 				continue;
 			}
-			TReadId rdid = ps->read_a().rdid;
+			TReadId rdid = rstate.ps->read_a().rdid;
 			bool sample = true;
 			if(arbitraryRandom) {
-				ps->read_a().seed = rndArb.nextU32();
-				ps->read_b().seed = rndArb.nextU32();
+				rstate.ps->read_a().seed = rndArb.nextU32();
+				rstate.ps->read_b().seed = rndArb.nextU32();
 			}
 			if(sampleFrac < 1.0f) {
-				rnd.init(ROTL(ps->read_a().seed, 2));
-				sample = rnd.nextFloat() < sampleFrac;
+				rstate.rnd.init(ROTL(rstate.ps->read_a().seed, 2));
+				sample = rstate.rnd.nextFloat() < sampleFrac;
 			}
 			if(rdid >= skipReads && rdid < qUpto && sample) {
 				// Align this read/pair
@@ -3176,10 +3207,10 @@ static void multiseedSearchWorker(void *vp) {
 						}
 					}
 				}
-				prm.reset(); // per-read metrics
-				prm.doFmString = false;
+				rstate.prm.reset(); // per-read metrics
+				rstate.prm.doFmString = false;
 				if(sam_print_xt) {
-					gettimeofday(&prm.tv_beg, &prm.tz_beg);
+					gettimeofday(&rstate.prm.tv_beg, &rstate.prm.tz_beg);
 				}
 #ifdef PER_THREAD_TIMING
 				int cpu = 0, node = 0;
@@ -3196,19 +3227,19 @@ static void multiseedSearchWorker(void *vp) {
 				// Try to align this read
 				while(retry) {
 					retry = false;
-					ca.nextRead(); // clear the cache
+					rstate.ca.nextRead(); // clear the cache
 					olm.reads++;
-					assert(!ca.aligning());
-					bool paired = !ps->read_b().empty();
-					const size_t rdlen1 = ps->read_a().length();
-					const size_t rdlen2 = paired ? ps->read_b().length() : 0;
+					assert(!rstate.ca.aligning());
+					bool paired = !rstate.ps->read_b().empty();
+					const size_t rdlen1 = rstate.ps->read_a().length();
+					const size_t rdlen2 = paired ? rstate.ps->read_b().length() : 0;
 					olm.bases += (rdlen1 + rdlen2);
-					msinkwrap.nextRead(
-						&ps->read_a(),
-						paired ? &ps->read_b() : NULL,
+					rstate.msinkwrap.nextRead(
+						&rstate.ps->read_a(),
+						paired ? &rstate.ps->read_b() : NULL,
 						rdid,
 						sc.qualitiesMatter());
-					assert(msinkwrap.inited());
+					assert(rstate.msinkwrap.inited());
 					size_t rdlens[2] = { rdlen1, rdlen2 };
 					size_t rdrows[2] = { rdlen1, rdlen2 };
 					// Calculate the minimum valid score threshold for the read
@@ -3229,20 +3260,20 @@ static void multiseedSearchWorker(void *vp) {
 						if(paired) minsc[1] = scoreMin.f<TAlScore>(rdlens[1]);
 						if(localAlign) {
 							if(minsc[0] < 0) {
-								if(!gQuiet) printLocalScoreMsg(*ps, paired, true);
+								if(!gQuiet) printLocalScoreMsg(*(rstate.ps), paired, true);
 								minsc[0] = 0;
 							}
 							if(paired && minsc[1] < 0) {
-								if(!gQuiet) printLocalScoreMsg(*ps, paired, false);
+								if(!gQuiet) printLocalScoreMsg(*(rstate.ps), paired, false);
 								minsc[1] = 0;
 							}
 						} else {
 							if(minsc[0] > 0) {
-								if(!gQuiet) printEEScoreMsg(*ps, paired, true);
+								if(!gQuiet) printEEScoreMsg(*(rstate.ps), paired, true);
 								minsc[0] = 0;
 							}
 							if(paired && minsc[1] > 0) {
-								if(!gQuiet) printEEScoreMsg(*ps, paired, false);
+								if(!gQuiet) printEEScoreMsg(*(rstate.ps), paired, false);
 								minsc[1] = 0;
 							}
 						}
@@ -3250,8 +3281,8 @@ static void multiseedSearchWorker(void *vp) {
 					// N filter; does the read have too many Ns?
 					size_t readns[2] = {0, 0};
 					sc.nFilterPair(
-						&ps->read_a().patFw,
-						paired ? &ps->read_b().patFw : NULL,
+						&rstate.ps->read_a().patFw,
+						paired ? &rstate.ps->read_b().patFw : NULL,
 						readns[0],
 						readns[1],
 						nfilt[0],
@@ -3262,33 +3293,32 @@ static void multiseedSearchWorker(void *vp) {
 					scfilt[1] = sc.scoreFilter(minsc[1], rdlens[1]);
 					lenfilt[0] = lenfilt[1] = true;
 					if(rdlens[0] <= (size_t)multiseedMms || rdlens[0] < 2) {
-						if(!gQuiet) printMmsSkipMsg(*ps, paired, true, multiseedMms);
+						if(!gQuiet) printMmsSkipMsg(*(rstate.ps), paired, true, multiseedMms);
 						lenfilt[0] = false;
 					}
 					if((rdlens[1] <= (size_t)multiseedMms || rdlens[1] < 2) && paired) {
-						if(!gQuiet) printMmsSkipMsg(*ps, paired, false, multiseedMms);
+						if(!gQuiet) printMmsSkipMsg(*(rstate.ps), paired, false, multiseedMms);
 						lenfilt[1] = false;
 					}
 					if(rdlens[0] < 2) {
-						if(!gQuiet) printLenSkipMsg(*ps, paired, true);
+						if(!gQuiet) printLenSkipMsg(*(rstate.ps), paired, true);
 						lenfilt[0] = false;
 					}
 					if(rdlens[1] < 2 && paired) {
-						if(!gQuiet) printLenSkipMsg(*ps, paired, false);
+						if(!gQuiet) printLenSkipMsg(*(rstate.ps), paired, false);
 						lenfilt[1] = false;
 					}
 					qcfilt[0] = qcfilt[1] = true;
 					if(qcFilter) {
-						qcfilt[0] = (ps->read_a().filter != '0');
-						qcfilt[1] = (ps->read_b().filter != '0');
+						qcfilt[0] = (rstate.ps->read_a().filter != '0');
+						qcfilt[1] = (rstate.ps->read_b().filter != '0');
 					}
 					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
-					prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
-					Read* rds[2] = { &ps->read_a(), &ps->read_b() };
+					rstate.prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
 					// For each mate...
-					assert(msinkwrap.empty());
-					sd.nextRead(paired, rdrows[0], rdrows[1]); // SwDriver
+					assert(rstate.msinkwrap.empty());
+					rstate.sd.nextRead(paired, rdrows[0], rdrows[1]); // SwDriver
 					size_t minedfw[2] = { 0, 0 };
 					size_t minedrc[2] = { 0, 0 };
 					// Calcualte nofw / no rc
@@ -3310,9 +3340,9 @@ static void multiseedSearchWorker(void *vp) {
 					size_t matemap[2] = { 0, 1 };
 					bool pairPostFilt = filt[0] && filt[1];
 					if(pairPostFilt) {
-						rnd.init(ps->read_a().seed ^ ps->read_b().seed);
+						rstate.rnd.init(rstate.ps->read_a().seed ^ rstate.ps->read_b().seed);
 					} else {
-						rnd.init(ps->read_a().seed);
+						rstate.rnd.init(rstate.ps->read_a().seed);
 					}
 					// Calculate interval length for both mates
 					int interval[2] = { 0, 0 };
@@ -3350,7 +3380,7 @@ static void multiseedSearchWorker(void *vp) {
 						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
 						assert_gt(streak[1], 0);
 					}
-					prm.maxDPFails = streak[0];
+					rstate.prm.maxDPFails = streak[0];
 					assert_gt(streak[0], 0);
 					// Calculate # seed rounds for each mate
 					size_t nrounds[2] = { nSeedRounds, nSeedRounds };
@@ -3367,9 +3397,9 @@ static void multiseedSearchWorker(void *vp) {
 							olm.freads++;               // reads filtered out
 							olm.fbases += rdlens[mate]; // bases filtered out
 						} else {
-							shs[mate].clear();
-							shs[mate].nextRead(mate == 0 ? ps->read_a() : ps->read_b());
-							assert(shs[mate].empty());
+							rstate.shs[mate].clear();
+							rstate.shs[mate].nextRead(mate == 0 ? rstate.ps->read_a() : rstate.ps->read_b());
+							assert(rstate.shs[mate].empty());
 							olm.ureads++;               // reads passing filter
 							olm.ubases += rdlens[mate]; // bases passing filter
 						}
@@ -3383,13 +3413,13 @@ static void multiseedSearchWorker(void *vp) {
 						if(doExactUpFront) {
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = matemap[matei];
-								if(!filt[mate] || done[mate] || msinkwrap.state().doneWithMate(mate == 0)) {
+								if(!filt[mate] || done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									continue;
 								}
 								swmSeed.exatts++;
 								nelt[mate] = al.exactSweep(
 									ebwtFw,        // index
-									*rds[mate],    // read
+									*rstate.rds(mate),    // read
 									sc,            // scoring scheme
 									nofw[mate],    // nofw?
 									norc[mate],    // norc?
@@ -3397,7 +3427,7 @@ static void multiseedSearchWorker(void *vp) {
 									minedfw[mate], // minimum # edits for fw mate
 									minedrc[mate], // minimum # edits for rc mate
 									true,          // report 0mm hits
-									shs[mate],     // put end-to-end results here
+									rstate.shs[mate],     // put end-to-end results here
 									sdm);          // metrics
 								size_t bestmin = min(minedfw[mate], minedrc[mate]);
 								if(bestmin == 0) {
@@ -3418,27 +3448,27 @@ static void multiseedSearchWorker(void *vp) {
 							for(size_t matei = 0; matei < (seedSumm ? 0:2); matei++) {
 								size_t mate = matemap[matei];
 								if(nelt[mate] == 0 || nelt[mate] > eePeEeltLimit) {
-									shs[mate].clearExactE2eHits();
+									rstate.shs[mate].clearExactE2eHits();
 									continue;
 								}
-								if(msinkwrap.state().doneWithMate(mate == 0)) {
-									shs[mate].clearExactE2eHits();
+								if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
+									rstate.shs[mate].clearExactE2eHits();
 									done[mate] = true;
 									continue;
 								}
 								assert(filt[mate]);
 								assert(matei == 0 || paired);
-								assert(!msinkwrap.maxed());
-								assert(msinkwrap.repOk());
+								assert(!rstate.msinkwrap.maxed());
+								assert(rstate.msinkwrap.repOk());
 								int ret = 0;
 								if(paired) {
 									// Paired-end dynamic programming driver
-									ret = sd.extendSeedsPaired(
-										*rds[mate],     // mate to align as anchor
-										*rds[mate ^ 1], // mate to align as opp.
+									ret = rstate.sd.extendSeedsPaired(
+										*rstate.rds(mate),     // mate to align as anchor
+										*rstate.rds(mate ^ 1), // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
 										!filt[mate ^ 1],// opposite mate filtered out?
-										shs[mate],      // seed hits for anchor
+										rstate.shs[mate],      // seed hits for anchor
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
@@ -3470,13 +3500,13 @@ static void multiseedSearchWorker(void *vp) {
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										tighten,        // -M score tightening mode
-										ca,             // seed alignment cache
-										rnd,            // pseudo-random source
+										rstate.ca,             // seed alignment cache
+										rstate.rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
 										swmMate,        // DP metrics, mate finding
-										prm,            // per-read metrics
-										&msinkwrap,     // for organizing hits
+										rstate.prm,            // per-read metrics
+										&rstate.msinkwrap,     // for organizing hits
 										true,           // seek mate immediately
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
@@ -3485,10 +3515,10 @@ static void multiseedSearchWorker(void *vp) {
 									// Might be done, but just with this mate
 								} else {
 									// Unpaired dynamic programming driver
-									ret = sd.extendSeeds(
-										*rds[mate],     // read
+									ret = rstate.sd.extendSeeds(
+										*rstate.rds(mate),     // read
 										mate == 0,      // mate #1?
-										shs[mate],      // seed hits
+										rstate.shs[mate],      // seed hits
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
@@ -3512,12 +3542,12 @@ static void multiseedSearchWorker(void *vp) {
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills
 										tighten,        // -M score tightening mode
-										ca,             // seed alignment cache
-										rnd,            // pseudo-random source
+										rstate.ca,             // seed alignment cache
+										rstate.rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
-										prm,            // per-read metrics
-										&msinkwrap,     // for organizing hits
+										rstate.prm,            // per-read metrics
+										&rstate.msinkwrap,     // for organizing hits
 										true,           // report hits once found
 										exhaustive[mate]);
 								}
@@ -3526,15 +3556,15 @@ static void multiseedSearchWorker(void *vp) {
 								MERGE_SW(osw);
 								// Clear out the exact hits so that we don't try to
 								// extend them again later!
-								shs[mate].clearExactE2eHits();
+								rstate.shs[mate].clearExactE2eHits();
 								if(ret == EXTEND_EXHAUSTED_CANDIDATES) {
 									// Not done yet
 								} else if(ret == EXTEND_POLICY_FULFILLED) {
 									// Policy is satisfied for this mate at least
-									if(msinkwrap.state().doneWithMate(mate == 0)) {
+									if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 										done[mate] = true;
 									}
-									if(msinkwrap.state().doneWithMate(mate == 1)) {
+									if(rstate.msinkwrap.state().doneWithMate(mate == 1)) {
 										done[mate^1] = true;
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
@@ -3565,16 +3595,16 @@ static void multiseedSearchWorker(void *vp) {
 								size_t mate = matemap[matei];
 								if(!filt[mate] || done[mate] || nelt[mate] > eePeEeltLimit) {
 									// Done with this mate
-									shs[mate].clear1mmE2eHits();
+									rstate.shs[mate].clear1mmE2eHits();
 									nelt[mate] = 0;
 									continue;
 								}
 								nelt[mate] = 0;
-								assert(!msinkwrap.maxed());
-								assert(msinkwrap.repOk());
-								//rnd.init(ROTL(rds[mate]->seed, 10));
-								assert(shs[mate].empty());
-								assert(shs[mate].repOk(&ca.current()));
+								assert(!rstate.msinkwrap.maxed());
+								assert(rstate.msinkwrap.repOk());
+								//rstate.rnd.init(ROTL(rstate.rds(mate)->seed, 10));
+								assert(rstate.shs[mate].empty());
+								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								bool yfw = minedfw[mate] <= 1 && !nofw[mate];
 								bool yrc = minedrc[mate] <= 1 && !norc[mate];
 								if(yfw || yrc) {
@@ -3583,7 +3613,7 @@ static void multiseedSearchWorker(void *vp) {
 									al.oneMmSearch(
 										&ebwtFw,        // BWT index
 										ebwtBw,         // BWT' index
-										*rds[mate],     // read
+										*rstate.rds(mate),     // read
 										sc,             // scoring scheme
 										minsc[mate],    // minimum score
 										!yfw,           // don't align forward read
@@ -3591,9 +3621,9 @@ static void multiseedSearchWorker(void *vp) {
 										localAlign,     // must be legal local alns?
 										false,          // do exact match
 										true,           // do 1mm
-										shs[mate],      // seed hits (hits installed here)
+										rstate.shs[mate],      // seed hits (hits installed here)
 										sdm);           // metrics
-									nelt[mate] = shs[mate].num1mmE2eHits();
+									nelt[mate] = rstate.shs[mate].num1mmE2eHits();
 								}
 							}
 							// Possibly reorder the mates
@@ -3608,19 +3638,19 @@ static void multiseedSearchWorker(void *vp) {
 								if(nelt[mate] == 0 || nelt[mate] > eePeEeltLimit) {
 									continue;
 								}
-								if(msinkwrap.state().doneWithMate(mate == 0)) {
+								if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									done[mate] = true;
 									continue;
 								}
 								int ret = 0;
 								if(paired) {
 									// Paired-end dynamic programming driver
-									ret = sd.extendSeedsPaired(
-										*rds[mate],     // mate to align as anchor
-										*rds[mate ^ 1], // mate to align as opp.
+									ret = rstate.sd.extendSeedsPaired(
+										*rstate.rds(mate),     // mate to align as anchor
+										*rstate.rds(mate ^ 1), // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
 										!filt[mate ^ 1],// opposite mate filtered out?
-										shs[mate],      // seed hits for anchor
+										rstate.shs[mate],      // seed hits for anchor
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
@@ -3652,13 +3682,13 @@ static void multiseedSearchWorker(void *vp) {
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										tighten,        // -M score tightening mode
-										ca,             // seed alignment cache
-										rnd,            // pseudo-random source
+										rstate.ca,             // seed alignment cache
+										rstate.rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
 										swmMate,        // DP metrics, mate finding
-										prm,            // per-read metrics
-										&msinkwrap,     // for organizing hits
+										rstate.prm,            // per-read metrics
+										&rstate.msinkwrap,     // for organizing hits
 										true,           // seek mate immediately
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
@@ -3667,10 +3697,10 @@ static void multiseedSearchWorker(void *vp) {
 									// Might be done, but just with this mate
 								} else {
 									// Unpaired dynamic programming driver
-									ret = sd.extendSeeds(
-										*rds[mate],     // read
+									ret = rstate.sd.extendSeeds(
+										*rstate.rds(mate),     // read
 										mate == 0,      // mate #1?
-										shs[mate],      // seed hits
+										rstate.shs[mate],      // seed hits
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
@@ -3694,12 +3724,12 @@ static void multiseedSearchWorker(void *vp) {
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										tighten,        // -M score tightening mode
-										ca,             // seed alignment cache
-										rnd,            // pseudo-random source
+										rstate.ca,             // seed alignment cache
+										rstate.rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
-										prm,            // per-read metrics
-										&msinkwrap,     // for organizing hits
+										rstate.prm,            // per-read metrics
+										&rstate.msinkwrap,     // for organizing hits
 										true,           // report hits once found
 										exhaustive[mate]);
 								}
@@ -3708,15 +3738,15 @@ static void multiseedSearchWorker(void *vp) {
 								MERGE_SW(osw);
 								// Clear out the 1mm hits so that we don't try to
 								// extend them again later!
-								shs[mate].clear1mmE2eHits();
+								rstate.shs[mate].clear1mmE2eHits();
 								if(ret == EXTEND_EXHAUSTED_CANDIDATES) {
 									// Not done yet
 								} else if(ret == EXTEND_POLICY_FULFILLED) {
 									// Policy is satisfied for this mate at least
-									if(msinkwrap.state().doneWithMate(mate == 0)) {
+									if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 										done[mate] = true;
 									}
-									if(msinkwrap.state().doneWithMate(mate == 1)) {
+									if(rstate.msinkwrap.state().doneWithMate(mate == 1)) {
 										done[mate^1] = true;
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
@@ -3751,20 +3781,20 @@ static void multiseedSearchWorker(void *vp) {
 					size_t nRepeatSeedsMS[] = {0, 0, 0, 0};
 					size_t seedHitTotMS[] = {0, 0, 0, 0};
 						for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
-							ca.nextRead(); // Clear cache in preparation for new search
-							shs[0].clearSeeds();
-							shs[1].clearSeeds();
-							assert(shs[0].empty());
-							assert(shs[1].empty());
-							assert(shs[0].repOk(&ca.current()));
-							assert(shs[1].repOk(&ca.current()));
+							rstate.ca.nextRead(); // Clear cache in preparation for new search
+							rstate.shs[0].clearSeeds();
+							rstate.shs[1].clearSeeds();
+							assert(rstate.shs[0].empty());
+							assert(rstate.shs[1].empty());
+							assert(rstate.shs[0].repOk(&rstate.ca.current()));
+							assert(rstate.shs[1].repOk(&rstate.ca.current()));
 							//if(roundi > 0) {
 							//	if(seedlens[0] > 8) seedlens[0]--;
 							//	if(seedlens[1] > 8) seedlens[1]--;
 							//}
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = matemap[matei];
-								if(done[mate] || msinkwrap.state().doneWithMate(mate == 0)) {
+								if(done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									// Done with this mate
 									done[mate] = true;
 									continue;
@@ -3781,42 +3811,42 @@ static void multiseedSearchWorker(void *vp) {
 								}
 								size_t offset = (interval[mate] * roundi) / nrounds[mate];
 								assert(roundi == 0 || offset > 0);
-								assert(!msinkwrap.maxed());
-								assert(msinkwrap.repOk());
-								//rnd.init(ROTL(rds[mate]->seed, 10));
-								assert(shs[mate].repOk(&ca.current()));
+								assert(!rstate.msinkwrap.maxed());
+								assert(rstate.msinkwrap.repOk());
+								//rstate.rnd.init(ROTL(rstate.rds(mate)->seed, 10));
+								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								swmSeed.sdatts++;
 								// Set up seeds
-								seeds[mate]->clear();
+								rstate.seeds(mate)->clear();
 								Seed::mmSeeds(
 									multiseedMms,    // max # mms per seed
 									seedlens[mate],  // length of a multiseed seed
-									*seeds[mate],    // seeds
+									*rstate.seeds(mate),    // seeds
 									gc);             // global constraint
 								// Check whether the offset would drive the first seed
 								// off the end
-								if(offset > 0 && (*seeds[mate])[0].len + offset > rds[mate]->length()) {
+								if(offset > 0 && (*rstate.seeds(mate))[0].len + offset > rstate.rds(mate)->length()) {
 									continue;
 								}
 								// Instantiate the seeds
 							std::pair<int, int> instFw, instRc;
 								std::pair<int, int> inst = al.instantiateSeeds(
-									*seeds[mate],   // search seeds
+									*rstate.seeds(mate),   // search seeds
 									offset,         // offset to begin extracting
 									interval[mate], // interval between seeds
-									*rds[mate],     // read to align
+									*rstate.rds(mate),     // read to align
 									sc,             // scoring scheme
 									nofw[mate],     // don't align forward read
 									norc[mate],     // don't align revcomp read
-									ca,             // holds some seed hits from previous reads
-									shs[mate],      // holds all the seed hits
+									rstate.ca,             // holds some seed hits from previous reads
+									rstate.shs[mate],      // holds all the seed hits
 								sdm,            // metrics
 								instFw,
 								instRc);
-								assert(shs[mate].repOk(&ca.current()));
+								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								if(inst.first + inst.second == 0) {
 									// No seed hits!  Done with this mate.
-									assert(shs[mate].empty());
+									assert(rstate.shs[mate].empty());
 									done[mate] = true;
 									break;
 								}
@@ -3825,17 +3855,17 @@ static void multiseedSearchWorker(void *vp) {
 							seedsTriedMS[mate * 2 + 1] = instRc.first + instRc.second;
 								// Align seeds
 								al.searchAllSeeds(
-									*seeds[mate],     // search seeds
+									*rstate.seeds(mate),     // search seeds
 									&ebwtFw,          // BWT index
 									ebwtBw,           // BWT' index
-									*rds[mate],       // read
+									*rstate.rds(mate),       // read
 									sc,               // scoring scheme
-									ca,               // alignment cache
-									shs[mate],        // store seed hits here
+									rstate.ca,               // alignment cache
+									rstate.shs[mate],        // store seed hits here
 									sdm,              // metrics
-									prm);             // per-read metrics
-								assert(shs[mate].repOk(&ca.current()));
-								if(shs[mate].empty()) {
+									rstate.prm);             // per-read metrics
+								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
+								if(rstate.shs[mate].empty()) {
 									// No seed alignments!  Done with this mate.
 									done[mate] = true;
 									break;
@@ -3844,59 +3874,59 @@ static void multiseedSearchWorker(void *vp) {
 							// shs contain what we need to know to update our seed
 							// summaries for this seeding
 							for(size_t mate = 0; mate < 2; mate++) {
-								if(!shs[mate].empty()) {
-									nUniqueSeeds += shs[mate].numUniqueSeeds();
-								nUniqueSeedsMS[mate * 2 + 0] += shs[mate].numUniqueSeedsStrand(true);
-								nUniqueSeedsMS[mate * 2 + 1] += shs[mate].numUniqueSeedsStrand(false);
-									nRepeatSeeds += shs[mate].numRepeatSeeds();
-								nRepeatSeedsMS[mate * 2 + 0] += shs[mate].numRepeatSeedsStrand(true);
-								nRepeatSeedsMS[mate * 2 + 1] += shs[mate].numRepeatSeedsStrand(false);
-									seedHitTot += shs[mate].numElts();
-								seedHitTotMS[mate * 2 + 0] += shs[mate].numEltsFw();
-								seedHitTotMS[mate * 2 + 1] += shs[mate].numEltsRc();
+								if(!rstate.shs[mate].empty()) {
+									nUniqueSeeds += rstate.shs[mate].numUniqueSeeds();
+								nUniqueSeedsMS[mate * 2 + 0] += rstate.shs[mate].numUniqueSeedsStrand(true);
+								nUniqueSeedsMS[mate * 2 + 1] += rstate.shs[mate].numUniqueSeedsStrand(false);
+									nRepeatSeeds += rstate.shs[mate].numRepeatSeeds();
+								nRepeatSeedsMS[mate * 2 + 0] += rstate.shs[mate].numRepeatSeedsStrand(true);
+								nRepeatSeedsMS[mate * 2 + 1] += rstate.shs[mate].numRepeatSeedsStrand(false);
+									seedHitTot += rstate.shs[mate].numElts();
+								seedHitTotMS[mate * 2 + 0] += rstate.shs[mate].numEltsFw();
+								seedHitTotMS[mate * 2 + 1] += rstate.shs[mate].numEltsRc();
 								}
 							}
 							double uniqFactor[2] = { 0.0f, 0.0f };
 							for(size_t i = 0; i < 2; i++) {
-								if(!shs[i].empty()) {
+								if(!rstate.shs[i].empty()) {
 									swmSeed.sdsucc++;
-									uniqFactor[i] = shs[i].uniquenessFactor();
+									uniqFactor[i] = rstate.shs[i].uniquenessFactor();
 								}
 							}
 							// Possibly reorder the mates
 							matemap[0] = 0; matemap[1] = 1;
-							if(!shs[0].empty() && !shs[1].empty() && uniqFactor[1] > uniqFactor[0]) {
+							if(!rstate.shs[0].empty() && !rstate.shs[1].empty() && uniqFactor[1] > uniqFactor[0]) {
 								// Do the mate with fewer exact hits first
 								// TODO: Consider mates & orientations separately?
 								matemap[0] = 1; matemap[1] = 0;
 							}
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = matemap[matei];
-								if(done[mate] || msinkwrap.state().doneWithMate(mate == 0)) {
+								if(done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									// Done with this mate
 									done[mate] = true;
 									continue;
 								}
-								assert(!msinkwrap.maxed());
-								assert(msinkwrap.repOk());
-								//rnd.init(ROTL(rds[mate]->seed, 10));
-								assert(shs[mate].repOk(&ca.current()));
+								assert(!rstate.msinkwrap.maxed());
+								assert(rstate.msinkwrap.repOk());
+								//rstate.rnd.init(ROTL(rstate.rds(mate)->seed, 10));
+								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								if(!seedSumm) {
 									// If there aren't any seed hits...
-									if(shs[mate].empty()) {
+									if(rstate.shs[mate].empty()) {
 										continue; // on to the next mate
 									}
 									// Sort seed hits into ranks
-									shs[mate].rankSeedHits(rnd, msinkwrap.allHits());
+									rstate.shs[mate].rankSeedHits(rstate.rnd, rstate.msinkwrap.allHits());
 									int ret = 0;
 									if(paired) {
 										// Paired-end dynamic programming driver
-										ret = sd.extendSeedsPaired(
-											*rds[mate],     // mate to align as anchor
-											*rds[mate ^ 1], // mate to align as opp.
+										ret = rstate.sd.extendSeedsPaired(
+											*rstate.rds(mate),     // mate to align as anchor
+											*rstate.rds(mate ^ 1), // mate to align as opp.
 											mate == 0,      // anchor is mate 1?
 											!filt[mate ^ 1],// opposite mate filtered out?
-											shs[mate],      // seed hits for anchor
+											rstate.shs[mate],      // seed hits for anchor
 											ebwtFw,         // bowtie index
 											ebwtBw,         // rev bowtie index
 											ref,            // packed reference strings
@@ -3928,13 +3958,13 @@ static void multiseedSearchWorker(void *vp) {
 											cpow2,          // checkpointer interval, log2
 											doTri,          // triangular mini-fills?
 											tighten,        // -M score tightening mode
-											ca,             // seed alignment cache
-											rnd,            // pseudo-random source
+											rstate.ca,             // seed alignment cache
+											rstate.rnd,            // pseudo-random source
 											wlm,            // group walk left metrics
 											swmSeed,        // DP metrics, seed extend
 											swmMate,        // DP metrics, mate finding
-											prm,            // per-read metrics
-											&msinkwrap,     // for organizing hits
+											rstate.prm,            // per-read metrics
+											&rstate.msinkwrap,     // for organizing hits
 											true,           // seek mate immediately
 											true,           // report hits once found
 											gReportDiscordant,// look for discordant alns?
@@ -3943,10 +3973,10 @@ static void multiseedSearchWorker(void *vp) {
 										// Might be done, but just with this mate
 									} else {
 										// Unpaired dynamic programming driver
-										ret = sd.extendSeeds(
-											*rds[mate],     // read
+										ret = rstate.sd.extendSeeds(
+											*rstate.rds(mate),     // read
 											mate == 0,      // mate #1?
-											shs[mate],      // seed hits
+											rstate.shs[mate],      // seed hits
 											ebwtFw,         // bowtie index
 											ebwtBw,         // rev bowtie index
 											ref,            // packed reference strings
@@ -3970,12 +4000,12 @@ static void multiseedSearchWorker(void *vp) {
 											cpow2,          // checkpointer interval, log2
 											doTri,          // triangular mini-fills?
 											tighten,        // -M score tightening mode
-											ca,             // seed alignment cache
-											rnd,            // pseudo-random source
+											rstate.ca,             // seed alignment cache
+											rstate.rnd,            // pseudo-random source
 											wlm,            // group walk left metrics
 											swmSeed,        // DP metrics, seed extend
-											prm,            // per-read metrics
-											&msinkwrap,     // for organizing hits
+											rstate.prm,            // per-read metrics
+											&rstate.msinkwrap,     // for organizing hits
 											true,           // report hits once found
 											exhaustive[mate]);
 									}
@@ -3986,10 +4016,10 @@ static void multiseedSearchWorker(void *vp) {
 										// Not done yet
 									} else if(ret == EXTEND_POLICY_FULFILLED) {
 										// Policy is satisfied for this mate at least
-										if(msinkwrap.state().doneWithMate(mate == 0)) {
+										if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 											done[mate] = true;
 										}
-										if(msinkwrap.state().doneWithMate(mate == 1)) {
+										if(rstate.msinkwrap.state().doneWithMate(mate == 1)) {
 											done[mate^1] = true;
 										}
 									} else if(ret == EXTEND_PERFECT_SCORE) {
@@ -4012,29 +4042,29 @@ static void multiseedSearchWorker(void *vp) {
 							// mates.  We continue on a mate only if its average
 							// interval length is high (> 1000)
 							for(size_t mate = 0; mate < 2; mate++) {
-								if(!done[mate] && shs[mate].averageHitsPerSeed() < seedBoostThresh) {
+								if(!done[mate] && rstate.shs[mate].averageHitsPerSeed() < seedBoostThresh) {
 									done[mate] = true;
 								}
 							}
 						} // end loop over reseeding rounds
 					if(seedsTried > 0) {
-							prm.seedPctUnique = (float)nUniqueSeeds / seedsTried;
-							prm.seedPctRep = (float)nRepeatSeeds / seedsTried;
-							prm.seedHitAvg = (float)seedHitTot / seedsTried;
+							rstate.prm.seedPctUnique = (float)nUniqueSeeds / seedsTried;
+							rstate.prm.seedPctRep = (float)nRepeatSeeds / seedsTried;
+							rstate.prm.seedHitAvg = (float)seedHitTot / seedsTried;
 					} else {
-						prm.seedPctUnique = -1.0f;
-						prm.seedPctRep = -1.0f;
-						prm.seedHitAvg = -1.0f;
+						rstate.prm.seedPctUnique = -1.0f;
+						rstate.prm.seedPctRep = -1.0f;
+						rstate.prm.seedHitAvg = -1.0f;
 					}
 					for(int i = 0; i < 4; i++) {
 						if(seedsTriedMS[i] > 0) {
-							prm.seedPctUniqueMS[i] = (float)nUniqueSeedsMS[i] / seedsTriedMS[i];
-							prm.seedPctRepMS[i] = (float)nRepeatSeedsMS[i] / seedsTriedMS[i];
-							prm.seedHitAvgMS[i] = (float)seedHitTotMS[i] / seedsTriedMS[i];
+							rstate.prm.seedPctUniqueMS[i] = (float)nUniqueSeedsMS[i] / seedsTriedMS[i];
+							rstate.prm.seedPctRepMS[i] = (float)nRepeatSeedsMS[i] / seedsTriedMS[i];
+							rstate.prm.seedHitAvgMS[i] = (float)seedHitTotMS[i] / seedsTriedMS[i];
 						} else {
-							prm.seedPctUniqueMS[i] = -1.0f;
-							prm.seedPctRepMS[i] = -1.0f;
-							prm.seedHitAvgMS[i] = -1.0f;
+							rstate.prm.seedPctUniqueMS[i] = -1.0f;
+							rstate.prm.seedPctRepMS[i] = -1.0f;
+							rstate.prm.seedHitAvgMS[i] = -1.0f;
 						}
 						}
 						size_t totnucs = 0;
@@ -4047,27 +4077,27 @@ static void multiseedSearchWorker(void *vp) {
 								totnucs += len;
 							}
 						}
-					prm.seedsPerNuc = totnucs > 0 ? ((float)seedsTried / totnucs) : -1;
+					rstate.prm.seedsPerNuc = totnucs > 0 ? ((float)seedsTried / totnucs) : -1;
 					for(int i = 0; i < 4; i++) {
-						prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
+						rstate.prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 					}
 						for(size_t i = 0; i < 2; i++) {
-							assert_leq(prm.nExIters, mxIter[i]);
-							assert_leq(prm.nExDps,   mxDp[i]);
-							assert_leq(prm.nMateDps, mxDp[i]);
-							assert_leq(prm.nExUgs,   mxUg[i]);
-							assert_leq(prm.nMateUgs, mxUg[i]);
-							assert_leq(prm.nDpFail,  streak[i]);
-							assert_leq(prm.nUgFail,  streak[i]);
-							assert_leq(prm.nEeFail,  streak[i]);
+							assert_leq(rstate.prm.nExIters, mxIter[i]);
+							assert_leq(rstate.prm.nExDps,   mxDp[i]);
+							assert_leq(rstate.prm.nMateDps, mxDp[i]);
+							assert_leq(rstate.prm.nExUgs,   mxUg[i]);
+							assert_leq(rstate.prm.nMateUgs, mxUg[i]);
+							assert_leq(rstate.prm.nDpFail,  streak[i]);
+							assert_leq(rstate.prm.nUgFail,  streak[i]);
+							assert_leq(rstate.prm.nEeFail,  streak[i]);
 						}
 
 				// Commit and report paired-end/unpaired alignments
-				//uint32_t sd = rds[0]->seed ^ rds[1]->seed;
-				//rnd.init(ROTL(sd, 20));
-				msinkwrap.finishRead(
-					&shs[0],              // seed results for mate 1
-					&shs[1],              // seed results for mate 2
+				//uint32_t sd = rstate.rds(0)->seed ^ rstate.rds(1)->seed;
+				//rstate.rnd.init(ROTL(sd, 20));
+				rstate.msinkwrap.finishRead(
+					&rstate.shs[0],              // seed results for mate 1
+					&rstate.shs[1],              // seed results for mate 2
 					exhaustive[0],        // exhausted seed hits for mate 1?
 					exhaustive[1],        // exhausted seed hits for mate 2?
 					nfilt[0],
@@ -4078,15 +4108,15 @@ static void multiseedSearchWorker(void *vp) {
 					lenfilt[1],
 					qcfilt[0],
 					qcfilt[1],
-					rnd,                  // pseudo-random generator
+					rstate.rnd,                  // pseudo-random generator
 					rpm,                  // reporting metrics
-					prm,                  // per-read metrics
+					rstate.prm,                  // per-read metrics
 					sc,                   // scoring scheme
 					!seedSumm,            // suppress seed summaries?
 					seedSumm,             // suppress alignments?
 					scUnMapped,           // Consider soft-clipped bases unmapped when calculating TLEN
 					xeq);
-				assert(!retry || msinkwrap.empty());
+				assert(!retry || rstate.msinkwrap.empty());
 			} // while(retry)
 		} // if(rdid >= skipReads && rdid < qUpto)
 		else if(rdid >= qUpto) {
@@ -4094,7 +4124,7 @@ static void multiseedSearchWorker(void *vp) {
 		}
 		if(metricsPerRead) {
 			MERGE_METRICS(metricsPt);
-			nametmp = ps->read_a().name;
+			nametmp = rstate.ps->read_a().name;
 			metricsPt.reportInterval(
 				metricsOfb, metricsStderr, true, &nametmp);
 			metricsPt.reset();
