@@ -320,7 +320,7 @@ public:
 	 * policy is satisfied and we can stop).  Otherwise, returns false.
 	 */
 	int extendSeeds(
-		Read& rd,                    // read to align
+		const Read& rd,                    // read to align
 		bool mate1,                  // true iff rd is mate #1
 		SeedResults& sh,             // seed hits to extend into full alignments
 		const Ebwt& ebwtFw,          // BWT
@@ -367,8 +367,8 @@ public:
 	 * policy is satisfied and we can stop).  Otherwise, returns false.
 	 */
 	int extendSeedsPaired(
-		Read& rd,                    // mate to align as anchor
-		Read& ord,                   // mate to align as opposite
+		const Read& rd,                    // mate to align as anchor
+		const Read& ord,                   // mate to align as opposite
 		bool anchor1,                // true iff anchor mate is mate1
 		bool oppFilt,                // true iff opposite mate was filtered out
 		SeedResults& sh,             // seed hits for anchor
