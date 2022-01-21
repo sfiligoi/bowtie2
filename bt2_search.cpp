@@ -3016,8 +3016,13 @@ public:
 	// default initializer for shs is OK
 	{}
 
-	EList<Seed> *seeds(int idx) { return (idx==0) ? &seeds1 : &seeds2; }
-	Read* rds(int idx) { return (idx==0) ? &ps->read_a() : &ps->read_b(); }
+	EList<Seed>& seeds(int idx) { return (idx==0) ? seeds1 : seeds2; }
+        const EList<Seed>& seeds(int idx) const { return (idx==0) ? seeds1 : seeds2; }
+
+	// rds is always used in constant manner
+	const Read& rds(int idx) const { return (idx==0) ? ps->read_a() : ps->read_b(); }
+	// if write access is needed, request it explicitly
+        Read& rdsw(int idx) { return (idx==0) ? ps->read_a() : ps->read_b(); }
 
 
 private:
@@ -3172,14 +3177,14 @@ static void multiseedSearchWorker(void *vp) {
 			} else if(!success) {
 				continue;
 			}
-			TReadId rdid = rstate.ps->read_a().rdid;
+			TReadId rdid = rstate.rds(0).rdid;
 			bool sample = true;
 			if(arbitraryRandom) {
-				rstate.ps->read_a().seed = rndArb.nextU32();
-				rstate.ps->read_b().seed = rndArb.nextU32();
+				rstate.rdsw(0).seed = rndArb.nextU32();
+				rstate.rdsw(1).seed = rndArb.nextU32();
 			}
 			if(sampleFrac < 1.0f) {
-				rstate.rnd.init(ROTL(rstate.ps->read_a().seed, 2));
+				rstate.rnd.init(ROTL(rstate.rds(0).seed, 2));
 				sample = rstate.rnd.nextFloat() < sampleFrac;
 			}
 			if(rdid >= skipReads && rdid < qUpto && sample) {
@@ -3230,13 +3235,13 @@ static void multiseedSearchWorker(void *vp) {
 					rstate.ca.nextRead(); // clear the cache
 					olm.reads++;
 					assert(!rstate.ca.aligning());
-					bool paired = !rstate.ps->read_b().empty();
-					const size_t rdlen1 = rstate.ps->read_a().length();
-					const size_t rdlen2 = paired ? rstate.ps->read_b().length() : 0;
+					bool paired = !rstate.rds(1).empty();
+					const size_t rdlen1 = rstate.rds(0).length();
+					const size_t rdlen2 = paired ? rstate.rds(1).length() : 0;
 					olm.bases += (rdlen1 + rdlen2);
 					rstate.msinkwrap.nextRead(
-						&rstate.ps->read_a(),
-						paired ? &rstate.ps->read_b() : NULL,
+						&rstate.rds(0),
+						paired ? &rstate.rds(1) : NULL,
 						rdid,
 						sc.qualitiesMatter());
 					assert(rstate.msinkwrap.inited());
@@ -3281,8 +3286,8 @@ static void multiseedSearchWorker(void *vp) {
 					// N filter; does the read have too many Ns?
 					size_t readns[2] = {0, 0};
 					sc.nFilterPair(
-						&rstate.ps->read_a().patFw,
-						paired ? &rstate.ps->read_b().patFw : NULL,
+						&rstate.rds(0).patFw,
+						paired ? &rstate.rds(1).patFw : NULL,
 						readns[0],
 						readns[1],
 						nfilt[0],
@@ -3310,8 +3315,8 @@ static void multiseedSearchWorker(void *vp) {
 					}
 					qcfilt[0] = qcfilt[1] = true;
 					if(qcFilter) {
-						qcfilt[0] = (rstate.ps->read_a().filter != '0');
-						qcfilt[1] = (rstate.ps->read_b().filter != '0');
+						qcfilt[0] = (rstate.rds(0).filter != '0');
+						qcfilt[1] = (rstate.rds(1).filter != '0');
 					}
 					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
@@ -3340,9 +3345,9 @@ static void multiseedSearchWorker(void *vp) {
 					size_t matemap[2] = { 0, 1 };
 					bool pairPostFilt = filt[0] && filt[1];
 					if(pairPostFilt) {
-						rstate.rnd.init(rstate.ps->read_a().seed ^ rstate.ps->read_b().seed);
+						rstate.rnd.init(rstate.rds(0).seed ^ rstate.rds(1).seed);
 					} else {
-						rstate.rnd.init(rstate.ps->read_a().seed);
+						rstate.rnd.init(rstate.rds(0).seed);
 					}
 					// Calculate interval length for both mates
 					int interval[2] = { 0, 0 };
@@ -3398,7 +3403,7 @@ static void multiseedSearchWorker(void *vp) {
 							olm.fbases += rdlens[mate]; // bases filtered out
 						} else {
 							rstate.shs[mate].clear();
-							rstate.shs[mate].nextRead(mate == 0 ? rstate.ps->read_a() : rstate.ps->read_b());
+							rstate.shs[mate].nextRead(rstate.rds(mate));
 							assert(rstate.shs[mate].empty());
 							olm.ureads++;               // reads passing filter
 							olm.ubases += rdlens[mate]; // bases passing filter
@@ -3419,7 +3424,7 @@ static void multiseedSearchWorker(void *vp) {
 								swmSeed.exatts++;
 								nelt[mate] = al.exactSweep(
 									ebwtFw,        // index
-									*rstate.rds(mate),    // read
+									rstate.rds(mate),    // read
 									sc,            // scoring scheme
 									nofw[mate],    // nofw?
 									norc[mate],    // norc?
@@ -3464,8 +3469,8 @@ static void multiseedSearchWorker(void *vp) {
 								if(paired) {
 									// Paired-end dynamic programming driver
 									ret = rstate.sd.extendSeedsPaired(
-										*rstate.rds(mate),     // mate to align as anchor
-										*rstate.rds(mate ^ 1), // mate to align as opp.
+										rstate.rds(mate),     // mate to align as anchor
+										rstate.rds(mate ^ 1), // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
 										!filt[mate ^ 1],// opposite mate filtered out?
 										rstate.shs[mate],      // seed hits for anchor
@@ -3516,7 +3521,7 @@ static void multiseedSearchWorker(void *vp) {
 								} else {
 									// Unpaired dynamic programming driver
 									ret = rstate.sd.extendSeeds(
-										*rstate.rds(mate),     // read
+										rstate.rds(mate),     // read
 										mate == 0,      // mate #1?
 										rstate.shs[mate],      // seed hits
 										ebwtFw,         // bowtie index
@@ -3602,7 +3607,7 @@ static void multiseedSearchWorker(void *vp) {
 								nelt[mate] = 0;
 								assert(!rstate.msinkwrap.maxed());
 								assert(rstate.msinkwrap.repOk());
-								//rstate.rnd.init(ROTL(rstate.rds(mate)->seed, 10));
+								//rstate.rnd.init(ROTL(rstate.rds(mate).seed, 10));
 								assert(rstate.shs[mate].empty());
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								bool yfw = minedfw[mate] <= 1 && !nofw[mate];
@@ -3613,7 +3618,7 @@ static void multiseedSearchWorker(void *vp) {
 									al.oneMmSearch(
 										&ebwtFw,        // BWT index
 										ebwtBw,         // BWT' index
-										*rstate.rds(mate),     // read
+										rstate.rds(mate),     // read
 										sc,             // scoring scheme
 										minsc[mate],    // minimum score
 										!yfw,           // don't align forward read
@@ -3646,8 +3651,8 @@ static void multiseedSearchWorker(void *vp) {
 								if(paired) {
 									// Paired-end dynamic programming driver
 									ret = rstate.sd.extendSeedsPaired(
-										*rstate.rds(mate),     // mate to align as anchor
-										*rstate.rds(mate ^ 1), // mate to align as opp.
+										rstate.rds(mate),     // mate to align as anchor
+										rstate.rds(mate ^ 1), // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
 										!filt[mate ^ 1],// opposite mate filtered out?
 										rstate.shs[mate],      // seed hits for anchor
@@ -3698,7 +3703,7 @@ static void multiseedSearchWorker(void *vp) {
 								} else {
 									// Unpaired dynamic programming driver
 									ret = rstate.sd.extendSeeds(
-										*rstate.rds(mate),     // read
+										rstate.rds(mate),     // read
 										mate == 0,      // mate #1?
 										rstate.shs[mate],      // seed hits
 										ebwtFw,         // bowtie index
@@ -3813,28 +3818,28 @@ static void multiseedSearchWorker(void *vp) {
 								assert(roundi == 0 || offset > 0);
 								assert(!rstate.msinkwrap.maxed());
 								assert(rstate.msinkwrap.repOk());
-								//rstate.rnd.init(ROTL(rstate.rds(mate)->seed, 10));
+								//rstate.rnd.init(ROTL(rstate.rds(mate).seed, 10));
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								swmSeed.sdatts++;
 								// Set up seeds
-								rstate.seeds(mate)->clear();
+								rstate.seeds(mate).clear();
 								Seed::mmSeeds(
 									multiseedMms,    // max # mms per seed
 									seedlens[mate],  // length of a multiseed seed
-									*rstate.seeds(mate),    // seeds
+									rstate.seeds(mate),    // seeds
 									gc);             // global constraint
 								// Check whether the offset would drive the first seed
 								// off the end
-								if(offset > 0 && (*rstate.seeds(mate))[0].len + offset > rstate.rds(mate)->length()) {
+								if(offset > 0 && rstate.seeds(mate)[0].len + offset > rstate.rds(mate).length()) {
 									continue;
 								}
 								// Instantiate the seeds
 							std::pair<int, int> instFw, instRc;
 								std::pair<int, int> inst = al.instantiateSeeds(
-									*rstate.seeds(mate),   // search seeds
+									rstate.seeds(mate),   // search seeds
 									offset,         // offset to begin extracting
 									interval[mate], // interval between seeds
-									*rstate.rds(mate),     // read to align
+									rstate.rds(mate),     // read to align
 									sc,             // scoring scheme
 									nofw[mate],     // don't align forward read
 									norc[mate],     // don't align revcomp read
@@ -3855,10 +3860,10 @@ static void multiseedSearchWorker(void *vp) {
 							seedsTriedMS[mate * 2 + 1] = instRc.first + instRc.second;
 								// Align seeds
 								al.searchAllSeeds(
-									*rstate.seeds(mate),     // search seeds
+									rstate.seeds(mate),     // search seeds
 									&ebwtFw,          // BWT index
 									ebwtBw,           // BWT' index
-									*rstate.rds(mate),       // read
+									rstate.rds(mate),       // read
 									sc,               // scoring scheme
 									rstate.ca,               // alignment cache
 									rstate.shs[mate],        // store seed hits here
@@ -3909,7 +3914,7 @@ static void multiseedSearchWorker(void *vp) {
 								}
 								assert(!rstate.msinkwrap.maxed());
 								assert(rstate.msinkwrap.repOk());
-								//rstate.rnd.init(ROTL(rstate.rds(mate)->seed, 10));
+								//rstate.rnd.init(ROTL(rstate.rds(mate).seed, 10));
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								if(!seedSumm) {
 									// If there aren't any seed hits...
@@ -3922,8 +3927,8 @@ static void multiseedSearchWorker(void *vp) {
 									if(paired) {
 										// Paired-end dynamic programming driver
 										ret = rstate.sd.extendSeedsPaired(
-											*rstate.rds(mate),     // mate to align as anchor
-											*rstate.rds(mate ^ 1), // mate to align as opp.
+											rstate.rds(mate),     // mate to align as anchor
+											rstate.rds(mate ^ 1), // mate to align as opp.
 											mate == 0,      // anchor is mate 1?
 											!filt[mate ^ 1],// opposite mate filtered out?
 											rstate.shs[mate],      // seed hits for anchor
@@ -3974,7 +3979,7 @@ static void multiseedSearchWorker(void *vp) {
 									} else {
 										// Unpaired dynamic programming driver
 										ret = rstate.sd.extendSeeds(
-											*rstate.rds(mate),     // read
+											rstate.rds(mate),     // read
 											mate == 0,      // mate #1?
 											rstate.shs[mate],      // seed hits
 											ebwtFw,         // bowtie index
@@ -4093,7 +4098,7 @@ static void multiseedSearchWorker(void *vp) {
 						}
 
 				// Commit and report paired-end/unpaired alignments
-				//uint32_t sd = rstate.rds(0)->seed ^ rstate.rds(1)->seed;
+				//uint32_t sd = rstate.rds(0).seed ^ rstate.rds(1).seed;
 				//rstate.rnd.init(ROTL(sd, 20));
 				rstate.msinkwrap.finishRead(
 					&rstate.shs[0],              // seed results for mate 1
@@ -4124,7 +4129,7 @@ static void multiseedSearchWorker(void *vp) {
 		}
 		if(metricsPerRead) {
 			MERGE_METRICS(metricsPt);
-			nametmp = rstate.ps->read_a().name;
+			nametmp = rstate.rds(0).name;
 			metricsPt.reportInterval(
 				metricsOfb, metricsStderr, true, &nametmp);
 			metricsPt.reset();
@@ -4375,7 +4380,7 @@ static void multiseedSearchWorker_2p5(void *vp) {
 			filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 			filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
 			prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
-			Read* rds[2] = { &ps->read_a(), &ps->read_b() };
+			const Read* rds[2] = { &ps->read_a(), &ps->read_b() };
 			assert(msinkwrap.empty());
 			// Calcualte nofw / no rc
 			bool nofw[2] = { false, false };
