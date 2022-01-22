@@ -2841,7 +2841,7 @@ static void setupMinScores(
 	const Scoring& sc,
 	const size_t *rdlens,
 	TAlScore *minsc,
-	TAlScore *maxpen)
+	TAlScore *maxpen = NULL)
 {
 	if(bwaSwLike) {
 		// From BWA-SW manual: "Given an l-long query, the
@@ -2876,8 +2876,10 @@ static void setupMinScores(
 			}
 		}
 	}
-	// Given minsc, calculate maxpen
-	if(localAlign) {
+
+	if (maxpen!=NULL) {
+	  // Given minsc, calculate maxpen
+	  if(localAlign) {
 		TAlScore perfect0 = sc.perfectScore(rdlens[0]);
 		assert_geq(perfect0, minsc[0]);
 		maxpen[0] = perfect0 - minsc[0];
@@ -2888,7 +2890,7 @@ static void setupMinScores(
 		} else {
 			maxpen[1] = std::numeric_limits<TAlScore>::min();
 		}
-	} else {
+	  } else {
 		assert_leq(minsc[0], 0);
 		maxpen[0] = -minsc[0];
 		if(paired) {
@@ -2897,6 +2899,7 @@ static void setupMinScores(
 		} else {
 			maxpen[1] = std::numeric_limits<TAlScore>::min();
 		}
+	  }
 	}
 }
 
@@ -3250,39 +3253,7 @@ static void multiseedSearchWorker(void *vp) {
 					// Calculate the minimum valid score threshold for the read
 					TAlScore minsc[2];
 					minsc[0] = minsc[1] = std::numeric_limits<TAlScore>::max();
-					if(bwaSwLike) {
-						// From BWA-SW manual: "Given an l-long query, the
-						// threshold for a hit to be retained is
-						// a*max{T,c*log(l)}."  We try to recreate that here.
-						float a = (float)sc.match(30);
-						float T = bwaSwLikeT, c = bwaSwLikeC;
-						minsc[0] = (TAlScore)max<float>(a*T, a*c*log(rdlens[0]));
-						if(paired) {
-							minsc[1] = (TAlScore)max<float>(a*T, a*c*log(rdlens[1]));
-						}
-					} else {
-						minsc[0] = scoreMin.f<TAlScore>(rdlens[0]);
-						if(paired) minsc[1] = scoreMin.f<TAlScore>(rdlens[1]);
-						if(localAlign) {
-							if(minsc[0] < 0) {
-								if(!gQuiet) printLocalScoreMsg(*(rstate.ps), paired, true);
-								minsc[0] = 0;
-							}
-							if(paired && minsc[1] < 0) {
-								if(!gQuiet) printLocalScoreMsg(*(rstate.ps), paired, false);
-								minsc[1] = 0;
-							}
-						} else {
-							if(minsc[0] > 0) {
-								if(!gQuiet) printEEScoreMsg(*(rstate.ps), paired, true);
-								minsc[0] = 0;
-							}
-							if(paired && minsc[1] > 0) {
-								if(!gQuiet) printEEScoreMsg(*(rstate.ps), paired, false);
-								minsc[1] = 0;
-							}
-						}
-					}
+					setupMinScores(*(rstate.ps), paired, localAlign, sc, rdlens, minsc);
 					// N filter; does the read have too many Ns?
 					size_t readns[2] = {0, 0};
 					sc.nFilterPair(
