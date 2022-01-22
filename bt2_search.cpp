@@ -2979,6 +2979,25 @@ private:
 	EList<Seed> seeds1, seeds2;
 
 public:
+	// Keep track of whether last search was exhaustive for mates 1 and 2
+	bool exhaustive[2];
+
+	// Calculate the minimum valid score threshold for the read
+	TAlScore minsc[2];
+	// Keep track of whether mates 1/2 were filtered out last time through
+	bool filt[2];
+	// Keep track of whether mates 1/2 were filtered out due Ns last time
+	bool nfilt[2];
+	// Keep track of whether mates 1/2 were filtered out due to not having
+	// enough characters to rise about the score threshold.
+	bool scfilt[2];
+	// Keep track of whether mates 1/2 were filtered out due to not having
+	// more characters than the number of mismatches permitted in a seed.
+	bool lenfilt[2];
+	// Keep track of whether mates 1/2 were filtered out by upstream qc
+	bool qcfilt[2];
+
+public:
 	unique_ptr<PatternSourcePerThread> ps;
 	// Interfaces for alignment and seed caches
 	AlignmentCacheIface ca;
@@ -2993,6 +3012,7 @@ public:
 
 	SeedResults shs[2];
 
+public:
 	ReadState(int tid, PatternSourcePerThreadFactory& patsrcFact) 
 	: scLocal()
 	, scCurrent(seedCacheCurrentMB * 1024 * 1024, false)
@@ -3005,6 +3025,13 @@ public:
                         gReportMixed)     // report unpaired alignments for paired reads?
 	, bmapq(new_mapq(mapqv, scoreMin, *multiseed_sc))
 	, seeds1(), seeds2()
+	, exhaustive{ false, false }
+	, minsc{ std::numeric_limits<TAlScore>::max(), std::numeric_limits<TAlScore>::max() }
+	, filt{ true, true }
+	, nfilt{ true, true }
+	, scfilt{ true, true }
+	, lenfilt{ true, true }
+	, qcfilt{ true, true }
 	, ps(patsrcFact.create())
 	, ca( &scCurrent,
 	      init_and_get_scLocal(scLocal).get(),
@@ -3026,6 +3053,60 @@ public:
 	// if write access is needed, request it explicitly
 	EList<Seed>& seedsw(int idx) { return (idx==0) ? seeds1 : seeds2; }
 	Read& rdsw(int idx) { return (idx==0) ? ps->read_a() : ps->read_b(); }
+
+	bool rds_paired() const { return !rds(1).empty();}
+	size_t rdlen(int idx) const { return (idx==0) ? rds(0).length() : ( rds(1).empty() ? 0 : rds(1).length() ); }
+
+
+	void compute_filts() {
+					const Scoring&          sc       = *multiseed_sc;
+					bool paired = rds_paired();
+					const size_t rdlens[2] = { rdlen(0), rdlen(1) };
+
+                                        minsc[0] = minsc[1] = std::numeric_limits<TAlScore>::max();
+                                        setupMinScores(*ps, paired, localAlign, sc, rdlens, minsc);
+
+					// N filter; does the read have too many Ns?
+					{
+					 size_t readns[2] = {0, 0}; // not really used, but nFilterPair wants it
+					 sc.nFilterPair(
+						&rds(0).patFw,
+						paired ? &rds(1).patFw : NULL,
+						readns[0],  // tmp
+						readns[1],  // tmp
+						nfilt[0],   // out
+						nfilt[1]);  // out
+					}
+					// Score filter; does the read enough character to rise above
+					// the score threshold?
+					scfilt[0] = sc.scoreFilter(minsc[0], rdlens[0]);
+					scfilt[1] = sc.scoreFilter(minsc[1], rdlens[1]);
+					lenfilt[0] = lenfilt[1] = true;
+					if(rdlens[0] <= (size_t)multiseedMms || rdlens[0] < 2) {
+						if(!gQuiet) printMmsSkipMsg(*ps, paired, true, multiseedMms);
+						lenfilt[0] = false;
+					}
+					if((rdlens[1] <= (size_t)multiseedMms || rdlens[1] < 2) && paired) {
+						if(!gQuiet) printMmsSkipMsg(*ps, paired, false, multiseedMms);
+						lenfilt[1] = false;
+					}
+					if(rdlens[0] < 2) {
+						if(!gQuiet) printLenSkipMsg(*ps, paired, true);
+						lenfilt[0] = false;
+					}
+					if(rdlens[1] < 2 && paired) {
+						if(!gQuiet) printLenSkipMsg(*ps, paired, false);
+						lenfilt[1] = false;
+					}
+					qcfilt[0] = qcfilt[1] = true;
+					if(qcFilter) {
+						qcfilt[0] = (rds(0).filter != '0');
+						qcfilt[1] = (rds(1).filter != '0');
+					}
+					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
+					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
+
+	}
 
 
 private:
@@ -3152,20 +3233,6 @@ static void multiseedSearchWorker(void *vp) {
 		// Used by thread with threadid == 1 to measure time elapsed
 		time_t iTime = time(0);
 
-		// Keep track of whether last search was exhaustive for mates 1 and 2
-		bool exhaustive[2] = { false, false };
-		// Keep track of whether mates 1/2 were filtered out last time through
-		bool filt[2]    = { true, true };
-		// Keep track of whether mates 1/2 were filtered out due Ns last time
-		bool nfilt[2]   = { true, true };
-		// Keep track of whether mates 1/2 were filtered out due to not having
-		// enough characters to rise about the score threshold.
-		bool scfilt[2]  = { true, true };
-		// Keep track of whether mates 1/2 were filtered out due to not having
-		// more characters than the number of mismatches permitted in a seed.
-		bool lenfilt[2] = { true, true };
-		// Keep track of whether mates 1/2 were filtered out by upstream qc
-		bool qcfilt[2]  = { true, true };
 
 		rndArb.init((uint32_t)time(0));
 		int mergei = 0;
@@ -3238,63 +3305,23 @@ static void multiseedSearchWorker(void *vp) {
 					rstate.ca.nextRead(); // clear the cache
 					olm.reads++;
 					assert(!rstate.ca.aligning());
-					bool paired = !rstate.rds(1).empty();
-					const size_t rdlen1 = rstate.rds(0).length();
-					const size_t rdlen2 = paired ? rstate.rds(1).length() : 0;
-					olm.bases += (rdlen1 + rdlen2);
+					bool paired = rstate.rds_paired();
+					const size_t rdlens[2] = { rstate.rdlen(0), rstate.rdlen(1) };
+					olm.bases += (rdlens[0] + rdlens[1]);
 					rstate.msinkwrap.nextRead(
 						&rstate.rds(0),
 						paired ? &rstate.rds(1) : NULL,
 						rdid,
 						sc.qualitiesMatter());
 					assert(rstate.msinkwrap.inited());
-					size_t rdlens[2] = { rdlen1, rdlen2 };
-					size_t rdrows[2] = { rdlen1, rdlen2 };
-					// Calculate the minimum valid score threshold for the read
-					TAlScore minsc[2];
-					minsc[0] = minsc[1] = std::numeric_limits<TAlScore>::max();
-					setupMinScores(*(rstate.ps), paired, localAlign, sc, rdlens, minsc);
-					// N filter; does the read have too many Ns?
-					size_t readns[2] = {0, 0};
-					sc.nFilterPair(
-						&rstate.rds(0).patFw,
-						paired ? &rstate.rds(1).patFw : NULL,
-						readns[0],
-						readns[1],
-						nfilt[0],
-						nfilt[1]);
-					// Score filter; does the read enough character to rise above
-					// the score threshold?
-					scfilt[0] = sc.scoreFilter(minsc[0], rdlens[0]);
-					scfilt[1] = sc.scoreFilter(minsc[1], rdlens[1]);
-					lenfilt[0] = lenfilt[1] = true;
-					if(rdlens[0] <= (size_t)multiseedMms || rdlens[0] < 2) {
-						if(!gQuiet) printMmsSkipMsg(*(rstate.ps), paired, true, multiseedMms);
-						lenfilt[0] = false;
-					}
-					if((rdlens[1] <= (size_t)multiseedMms || rdlens[1] < 2) && paired) {
-						if(!gQuiet) printMmsSkipMsg(*(rstate.ps), paired, false, multiseedMms);
-						lenfilt[1] = false;
-					}
-					if(rdlens[0] < 2) {
-						if(!gQuiet) printLenSkipMsg(*(rstate.ps), paired, true);
-						lenfilt[0] = false;
-					}
-					if(rdlens[1] < 2 && paired) {
-						if(!gQuiet) printLenSkipMsg(*(rstate.ps), paired, false);
-						lenfilt[1] = false;
-					}
-					qcfilt[0] = qcfilt[1] = true;
-					if(qcFilter) {
-						qcfilt[0] = (rstate.rds(0).filter != '0');
-						qcfilt[1] = (rstate.rds(1).filter != '0');
-					}
-					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
-					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
-					rstate.prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
+					rstate.compute_filts();
+					rstate.prm.nFilt += (rstate.filt[0] ? 0 : 1) + (rstate.filt[1] ? 0 : 1);
 					// For each mate...
 					assert(rstate.msinkwrap.empty());
-					rstate.sd.nextRead(paired, rdrows[0], rdrows[1]); // SwDriver
+					{
+					  const size_t rdrows[2] = { rdlens[0], rdlens[1] };
+					  rstate.sd.nextRead(paired, rdrows[0], rdrows[1]); // SwDriver
+					}
 					size_t minedfw[2] = { 0, 0 };
 					size_t minedrc[2] = { 0, 0 };
 					// Calcualte nofw / no rc
@@ -3312,9 +3339,9 @@ static void multiseedSearchWorker(void *vp) {
 						nceil[1] = nCeil.f<int>((double)rdlens[1]);
 						nceil[1] = min(nceil[1], (int)rdlens[1]);
 					}
-					exhaustive[0] = exhaustive[1] = false;
+					rstate.exhaustive[0] = rstate.exhaustive[1] = false;
 					size_t matemap[2] = { 0, 1 };
-					bool pairPostFilt = filt[0] && filt[1];
+					bool pairPostFilt = rstate.filt[0] && rstate.filt[1];
 					if(pairPostFilt) {
 						rstate.rnd.init(rstate.rds(0).seed ^ rstate.rds(1).seed);
 					} else {
@@ -3324,7 +3351,7 @@ static void multiseedSearchWorker(void *vp) {
 					int interval[2] = { 0, 0 };
 					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 						interval[mate] = msIval.f<int>((double)rdlens[mate]);
-						if(filt[0] && filt[1]) {
+						if(rstate.filt[0] && rstate.filt[1]) {
 							// Boost interval length by 20% for paired-end reads
 							interval[mate] = (int)(interval[mate] * 1.2 + 0.5);
 						}
@@ -3351,7 +3378,7 @@ static void multiseedSearchWorker(void *vp) {
 							mxIter[mate]   += (khits-1) * maxItersIncr;
 						}
 					}
-					if(filt[0] && filt[1]) {
+					if(rstate.filt[0] && rstate.filt[1]) {
 						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
 						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
 						assert_gt(streak[1], 0);
@@ -3360,7 +3387,7 @@ static void multiseedSearchWorker(void *vp) {
 					assert_gt(streak[0], 0);
 					// Calculate # seed rounds for each mate
 					size_t nrounds[2] = { nSeedRounds, nSeedRounds };
-					if(filt[0] && filt[1]) {
+					if(rstate.filt[0] && rstate.filt[1]) {
 						nrounds[0] = (size_t)ceil((double)nrounds[0] / 2.0);
 						nrounds[1] = (size_t)ceil((double)nrounds[1] / 2.0);
 						assert_gt(nrounds[1], 0);
@@ -3368,7 +3395,7 @@ static void multiseedSearchWorker(void *vp) {
 					assert_gt(nrounds[0], 0);
 					// Increment counters according to what got filtered
 					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
-						if(!filt[mate]) {
+						if(!rstate.filt[mate]) {
 							// Mate was rejected by N filter
 							olm.freads++;               // reads filtered out
 							olm.fbases += rdlens[mate]; // bases filtered out
@@ -3382,14 +3409,14 @@ static void multiseedSearchWorker(void *vp) {
 					}
 					size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 					// Whether we're done with mate1 / mate2
-					bool done[2] = { !filt[0], !filt[1] };
+					bool done[2] = { !rstate.filt[0], !rstate.filt[1] };
 					size_t nelt[2] = {0, 0};
 
 						// Find end-to-end exact alignments for each read
 						if(doExactUpFront) {
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = matemap[matei];
-								if(!filt[mate] || done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
+								if(!rstate.filt[mate] || done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									continue;
 								}
 								swmSeed.exatts++;
@@ -3432,7 +3459,7 @@ static void multiseedSearchWorker(void *vp) {
 									done[mate] = true;
 									continue;
 								}
-								assert(filt[mate]);
+								assert(rstate.filt[mate]);
 								assert(matei == 0 || paired);
 								assert(!rstate.msinkwrap.maxed());
 								assert(rstate.msinkwrap.repOk());
@@ -3443,7 +3470,7 @@ static void multiseedSearchWorker(void *vp) {
 										rstate.rds(mate),     // mate to align as anchor
 										rstate.rds(mate ^ 1), // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
-										!filt[mate ^ 1],// opposite mate filtered out?
+										!rstate.filt[mate ^ 1],// opposite mate filtered out?
 										rstate.shs[mate],      // seed hits for anchor
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
@@ -3455,8 +3482,8 @@ static void multiseedSearchWorker(void *vp) {
 										-1,             // # mms allowed in a seed
 										0,              // length of a seed
 										0,              // interval between seeds
-										minsc[mate],    // min score for anchor
-										minsc[mate^1],  // min score for opp.
+										rstate.minsc[mate],    // min score for anchor
+										rstate.minsc[mate^1],  // min score for opp.
 										nceil[mate],    // N ceil for anchor
 										nceil[mate^1],  // N ceil for opp.
 										nofw[mate],     // don't align forward read
@@ -3487,7 +3514,7 @@ static void multiseedSearchWorker(void *vp) {
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
 										gReportMixed,   // look for unpaired alns?
-										exhaustive[mate]);
+										rstate.exhaustive[mate]);
 									// Might be done, but just with this mate
 								} else {
 									// Unpaired dynamic programming driver
@@ -3503,7 +3530,7 @@ static void multiseedSearchWorker(void *vp) {
 										-1,             // # mms allowed in a seed
 										0,              // length of a seed
 										0,              // interval between seeds
-										minsc[mate],    // minimum score for valid
+										rstate.minsc[mate],    // minimum score for valid
 										nceil[mate],    // N ceil for anchor
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
@@ -3525,7 +3552,7 @@ static void multiseedSearchWorker(void *vp) {
 										rstate.prm,            // per-read metrics
 										&rstate.msinkwrap,     // for organizing hits
 										true,           // report hits once found
-										exhaustive[mate]);
+										rstate.exhaustive[mate]);
 								}
 								assert_gt(ret, 0);
 								MERGE_SW(sw);
@@ -3558,7 +3585,7 @@ static void multiseedSearchWorker(void *vp) {
 								}
 								if(!done[mate]) {
 									TAlScore perfectScore = sc.perfectScore(rdlens[mate]);
-									if(!done[mate] && minsc[mate] == perfectScore) {
+									if(!done[mate] && rstate.minsc[mate] == perfectScore) {
 										done[mate] = true;
 									}
 								}
@@ -3569,7 +3596,7 @@ static void multiseedSearchWorker(void *vp) {
 						if(do1mmUpFront && !seedSumm) {
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = matemap[matei];
-								if(!filt[mate] || done[mate] || nelt[mate] > eePeEeltLimit) {
+								if(!rstate.filt[mate] || done[mate] || nelt[mate] > eePeEeltLimit) {
 									// Done with this mate
 									rstate.shs[mate].clear1mmE2eHits();
 									nelt[mate] = 0;
@@ -3591,7 +3618,7 @@ static void multiseedSearchWorker(void *vp) {
 										ebwtBw,         // BWT' index
 										rstate.rds(mate),     // read
 										sc,             // scoring scheme
-										minsc[mate],    // minimum score
+										rstate.minsc[mate],    // minimum score
 										!yfw,           // don't align forward read
 										!yrc,           // don't align revcomp read
 										localAlign,     // must be legal local alns?
@@ -3625,7 +3652,7 @@ static void multiseedSearchWorker(void *vp) {
 										rstate.rds(mate),     // mate to align as anchor
 										rstate.rds(mate ^ 1), // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
-										!filt[mate ^ 1],// opposite mate filtered out?
+										!rstate.filt[mate ^ 1],// opposite mate filtered out?
 										rstate.shs[mate],      // seed hits for anchor
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
@@ -3637,8 +3664,8 @@ static void multiseedSearchWorker(void *vp) {
 										-1,             // # mms allowed in a seed
 										0,              // length of a seed
 										0,              // interval between seeds
-										minsc[mate],    // min score for anchor
-										minsc[mate^1],  // min score for opp.
+										rstate.minsc[mate],    // min score for anchor
+										rstate.minsc[mate^1],  // min score for opp.
 										nceil[mate],    // N ceil for anchor
 										nceil[mate^1],  // N ceil for opp.
 										nofw[mate],     // don't align forward read
@@ -3669,7 +3696,7 @@ static void multiseedSearchWorker(void *vp) {
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
 										gReportMixed,   // look for unpaired alns?
-										exhaustive[mate]);
+										rstate.exhaustive[mate]);
 									// Might be done, but just with this mate
 								} else {
 									// Unpaired dynamic programming driver
@@ -3685,7 +3712,7 @@ static void multiseedSearchWorker(void *vp) {
 										-1,             // # mms allowed in a seed
 										0,              // length of a seed
 										0,              // interval between seeds
-										minsc[mate],    // minimum score for valid
+										rstate.minsc[mate],    // minimum score for valid
 										nceil[mate],    // N ceil for anchor
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
@@ -3707,7 +3734,7 @@ static void multiseedSearchWorker(void *vp) {
 										rstate.prm,            // per-read metrics
 										&rstate.msinkwrap,     // for organizing hits
 										true,           // report hits once found
-										exhaustive[mate]);
+										rstate.exhaustive[mate]);
 								}
 								assert_gt(ret, 0);
 								MERGE_SW(sw);
@@ -3740,7 +3767,7 @@ static void multiseedSearchWorker(void *vp) {
 								}
 								if(!done[mate]) {
 									TAlScore perfectScore = sc.perfectScore(rdlens[mate]);
-									if(!done[mate] && minsc[mate] == perfectScore) {
+									if(!done[mate] && rstate.minsc[mate] == perfectScore) {
 										done[mate] = true;
 									}
 								}
@@ -3901,7 +3928,7 @@ static void multiseedSearchWorker(void *vp) {
 											rstate.rds(mate),     // mate to align as anchor
 											rstate.rds(mate ^ 1), // mate to align as opp.
 											mate == 0,      // anchor is mate 1?
-											!filt[mate ^ 1],// opposite mate filtered out?
+											!rstate.filt[mate ^ 1],// opposite mate filtered out?
 											rstate.shs[mate],      // seed hits for anchor
 											ebwtFw,         // bowtie index
 											ebwtBw,         // rev bowtie index
@@ -3913,8 +3940,8 @@ static void multiseedSearchWorker(void *vp) {
 											multiseedMms,   // # mms allowed in a seed
 											seedlens[mate], // length of a seed
 											interval[mate], // interval between seeds
-											minsc[mate],    // min score for anchor
-											minsc[mate^1],  // min score for opp.
+											rstate.minsc[mate],    // min score for anchor
+											rstate.minsc[mate^1],  // min score for opp.
 											nceil[mate],    // N ceil for anchor
 											nceil[mate^1],  // N ceil for opp.
 											nofw[mate],     // don't align forward read
@@ -3945,7 +3972,7 @@ static void multiseedSearchWorker(void *vp) {
 											true,           // report hits once found
 											gReportDiscordant,// look for discordant alns?
 											gReportMixed,   // look for unpaired alns?
-											exhaustive[mate]);
+											rstate.exhaustive[mate]);
 										// Might be done, but just with this mate
 									} else {
 										// Unpaired dynamic programming driver
@@ -3961,7 +3988,7 @@ static void multiseedSearchWorker(void *vp) {
 											multiseedMms,   // # mms allowed in a seed
 											seedlens[mate], // length of a seed
 											interval[mate], // interval between seeds
-											minsc[mate],    // minimum score for valid
+											rstate.minsc[mate],    // minimum score for valid
 											nceil[mate],    // N ceil for anchor
 											maxhalf,        // max width on one DP side
 											doUngapped,     // do ungapped alignment
@@ -3983,7 +4010,7 @@ static void multiseedSearchWorker(void *vp) {
 											rstate.prm,            // per-read metrics
 											&rstate.msinkwrap,     // for organizing hits
 											true,           // report hits once found
-											exhaustive[mate]);
+											rstate.exhaustive[mate]);
 									}
 									assert_gt(ret, 0);
 									MERGE_SW(sw);
@@ -4045,7 +4072,7 @@ static void multiseedSearchWorker(void *vp) {
 						}
 						size_t totnucs = 0;
 						for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
-							if(filt[mate]) {
+							if(rstate.filt[mate]) {
 								size_t len = rdlens[mate];
 								if(!nofw[mate] && !norc[mate]) {
 									len *= 2;
@@ -4074,16 +4101,16 @@ static void multiseedSearchWorker(void *vp) {
 				rstate.msinkwrap.finishRead(
 					&rstate.shs[0],              // seed results for mate 1
 					&rstate.shs[1],              // seed results for mate 2
-					exhaustive[0],        // exhausted seed hits for mate 1?
-					exhaustive[1],        // exhausted seed hits for mate 2?
-					nfilt[0],
-					nfilt[1],
-					scfilt[0],
-					scfilt[1],
-					lenfilt[0],
-					lenfilt[1],
-					qcfilt[0],
-					qcfilt[1],
+					rstate.exhaustive[0],        // exhausted seed hits for mate 1?
+					rstate.exhaustive[1],        // exhausted seed hits for mate 2?
+					rstate.nfilt[0],
+					rstate.nfilt[1],
+					rstate.scfilt[0],
+					rstate.scfilt[1],
+					rstate.lenfilt[0],
+					rstate.lenfilt[1],
+					rstate.qcfilt[0],
+					rstate.qcfilt[1],
 					rstate.rnd,                  // pseudo-random generator
 					rpm,                  // reporting metrics
 					rstate.prm,                  // per-read metrics
