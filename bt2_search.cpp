@@ -3016,13 +3016,13 @@ public:
 	// default initializer for shs is OK
 	{}
 
-	EList<Seed>& seeds(int idx) { return (idx==0) ? seeds1 : seeds2; }
+	// const by default
         const EList<Seed>& seeds(int idx) const { return (idx==0) ? seeds1 : seeds2; }
-
-	// rds is always used in constant manner
 	const Read& rds(int idx) const { return (idx==0) ? ps->read_a() : ps->read_b(); }
+
 	// if write access is needed, request it explicitly
-        Read& rdsw(int idx) { return (idx==0) ? ps->read_a() : ps->read_b(); }
+	EList<Seed>& seedsw(int idx) { return (idx==0) ? seeds1 : seeds2; }
+	Read& rdsw(int idx) { return (idx==0) ? ps->read_a() : ps->read_b(); }
 
 
 private:
@@ -3822,11 +3822,11 @@ static void multiseedSearchWorker(void *vp) {
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								swmSeed.sdatts++;
 								// Set up seeds
-								rstate.seeds(mate).clear();
+								rstate.seedsw(mate).clear();
 								Seed::mmSeeds(
 									multiseedMms,    // max # mms per seed
 									seedlens[mate],  // length of a multiseed seed
-									rstate.seeds(mate),    // seeds
+									rstate.seedsw(mate),    // seeds
 									gc);             // global constraint
 								// Check whether the offset would drive the first seed
 								// off the end
