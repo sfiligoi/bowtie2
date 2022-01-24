@@ -2997,6 +2997,20 @@ public:
 	// Keep track of whether mates 1/2 were filtered out by upstream qc
 	bool qcfilt[2];
 
+	bool nofw[2];
+	bool norc[2];
+	int nceil[2];
+	// Calculate interval length for both mates
+	int interval[2];
+	// Calculate streak length
+	size_t streak[2];
+	size_t mtStreak[2];
+	size_t mxDp[2];
+	size_t mxUg[2];
+	size_t mxIter[2];
+	// Calculate # seed rounds for each mate
+	size_t nrounds[2];
+
 public:
 	unique_ptr<PatternSourcePerThread> ps;
 	// Interfaces for alignment and seed caches
@@ -3032,6 +3046,16 @@ public:
 	, scfilt{ true, true }
 	, lenfilt{ true, true }
 	, qcfilt{ true, true }
+	, nofw{ false, false }
+	, norc{ false, false }
+	, nceil{ 0, 0 }
+	, interval{ 0, 0 }
+	, streak{   maxDpStreak,   maxDpStreak }
+	, mtStreak{ maxMateStreak, maxMateStreak }
+	, mxDp{     maxDp,         maxDp       }
+	, mxUg{     maxUg,         maxUg       }
+	, mxIter{   maxIters,      maxIters    }
+	, nrounds{ nSeedRounds, nSeedRounds }
 	, ps(patsrcFact.create())
 	, ca( &scCurrent,
 	      init_and_get_scLocal(scLocal).get(),
@@ -3057,7 +3081,7 @@ public:
 	bool rds_paired() const { return !rds(1).empty();}
 	size_t rdlen(int idx) const { return (idx==0) ? rds(0).length() : ( rds(1).empty() ? 0 : rds(1).length() ); }
 
-
+	// compute minsc and *filt
 	void compute_filts() {
 					const Scoring&          sc       = *multiseed_sc;
 					bool paired = rds_paired();
@@ -3106,6 +3130,69 @@ public:
 					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
 
+					prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
+	}
+
+	// compute nofw,norc,ncel,interval,*streak,nrounds
+	void compute_streak() {
+					bool paired = rds_paired();
+					const size_t rdlens[2] = { rdlen(0), rdlen(1) };
+
+					// Calcualte nofw / no rc
+					nofw[0] = paired ? (gMate1fw ? gNofw : gNorc) : gNofw;
+					norc[0] = paired ? (gMate1fw ? gNorc : gNofw) : gNorc;
+					nofw[1] = paired ? (gMate2fw ? gNofw : gNorc) : gNofw;
+					norc[1] = paired ? (gMate2fw ? gNorc : gNofw) : gNorc;
+					// Calculate nceil
+					nceil[0] = nCeil.f<int>((double)rdlens[0]);
+					nceil[0] = min(nceil[0], (int)rdlens[0]);
+					if(paired) {
+						nceil[1] = nCeil.f<int>((double)rdlens[1]);
+						nceil[1] = min(nceil[1], (int)rdlens[1]);
+					} else {
+						nceil[1] = 0;
+					}
+					// Calculate interval length for both mates
+					interval[1]=0;
+					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
+						interval[mate] = msIval.f<int>((double)rdlens[mate]);
+						if(filt[0] && filt[1]) {
+							// Boost interval length by 20% for paired-end reads
+							interval[mate] = (int)(interval[mate] * 1.2 + 0.5);
+						}
+						interval[mate] = max(interval[mate], 1);
+					}
+					// Calculate streak length
+					if(allHits) {
+						streak[0]   = streak[1]   = std::numeric_limits<size_t>::max();
+						mtStreak[0] = mtStreak[1] = std::numeric_limits<size_t>::max();
+						mxDp[0]     = mxDp[1]     = std::numeric_limits<size_t>::max();
+						mxUg[0]     = mxUg[1]     = std::numeric_limits<size_t>::max();
+						mxIter[0]   = mxIter[1]   = std::numeric_limits<size_t>::max();
+					} else if(khits > 1) {
+						for(size_t mate = 0; mate < 2; mate++) {
+							streak[mate]   += (khits-1) * maxStreakIncr;
+							mtStreak[mate] += (khits-1) * maxStreakIncr;
+							mxDp[mate]     += (khits-1) * maxItersIncr;
+							mxUg[mate]     += (khits-1) * maxItersIncr;
+							mxIter[mate]   += (khits-1) * maxItersIncr;
+						}
+					}
+					if(filt[0] && filt[1]) {
+						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
+						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
+						assert_gt(streak[1], 0);
+					}
+					prm.maxDPFails = streak[0];
+					assert_gt(streak[0], 0);
+					// Calculate # seed rounds for each mate
+					nrounds[0] = nrounds[1] = nSeedRounds;
+					if(filt[0] && filt[1]) {
+						nrounds[0] = (size_t)ceil((double)nrounds[0] / 2.0);
+						nrounds[1] = (size_t)ceil((double)nrounds[1] / 2.0);
+						assert_gt(nrounds[1], 0);
+					}
+					assert_gt(nrounds[0], 0);
 	}
 
 
@@ -3315,84 +3402,20 @@ static void multiseedSearchWorker(void *vp) {
 						sc.qualitiesMatter());
 					assert(rstate.msinkwrap.inited());
 					rstate.compute_filts();
-					rstate.prm.nFilt += (rstate.filt[0] ? 0 : 1) + (rstate.filt[1] ? 0 : 1);
 					// For each mate...
 					assert(rstate.msinkwrap.empty());
 					{
 					  const size_t rdrows[2] = { rdlens[0], rdlens[1] };
 					  rstate.sd.nextRead(paired, rdrows[0], rdrows[1]); // SwDriver
-					}
-					size_t minedfw[2] = { 0, 0 };
-					size_t minedrc[2] = { 0, 0 };
-					// Calcualte nofw / no rc
-					bool nofw[2] = { false, false };
-					bool norc[2] = { false, false };
-					nofw[0] = paired ? (gMate1fw ? gNofw : gNorc) : gNofw;
-					norc[0] = paired ? (gMate1fw ? gNorc : gNofw) : gNorc;
-					nofw[1] = paired ? (gMate2fw ? gNofw : gNorc) : gNofw;
-					norc[1] = paired ? (gMate2fw ? gNorc : gNofw) : gNorc;
-					// Calculate nceil
-					int nceil[2] = { 0, 0 };
-					nceil[0] = nCeil.f<int>((double)rdlens[0]);
-					nceil[0] = min(nceil[0], (int)rdlens[0]);
-					if(paired) {
-						nceil[1] = nCeil.f<int>((double)rdlens[1]);
-						nceil[1] = min(nceil[1], (int)rdlens[1]);
-					}
-					rstate.exhaustive[0] = rstate.exhaustive[1] = false;
-					size_t matemap[2] = { 0, 1 };
-					bool pairPostFilt = rstate.filt[0] && rstate.filt[1];
-					if(pairPostFilt) {
+					
+					  bool pairPostFilt = rstate.filt[0] && rstate.filt[1];
+					  if(pairPostFilt) {
 						rstate.rnd.init(rstate.rds(0).seed ^ rstate.rds(1).seed);
-					} else {
+					  } else {
 						rstate.rnd.init(rstate.rds(0).seed);
+					  }
 					}
-					// Calculate interval length for both mates
-					int interval[2] = { 0, 0 };
-					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
-						interval[mate] = msIval.f<int>((double)rdlens[mate]);
-						if(rstate.filt[0] && rstate.filt[1]) {
-							// Boost interval length by 20% for paired-end reads
-							interval[mate] = (int)(interval[mate] * 1.2 + 0.5);
-						}
-						interval[mate] = max(interval[mate], 1);
-					}
-					// Calculate streak length
-					size_t streak[2]    = { maxDpStreak,   maxDpStreak };
-					size_t mtStreak[2]  = { maxMateStreak, maxMateStreak };
-					size_t mxDp[2]      = { maxDp,         maxDp       };
-					size_t mxUg[2]      = { maxUg,         maxUg       };
-					size_t mxIter[2]    = { maxIters,      maxIters    };
-					if(allHits) {
-						streak[0]   = streak[1]   = std::numeric_limits<size_t>::max();
-						mtStreak[0] = mtStreak[1] = std::numeric_limits<size_t>::max();
-						mxDp[0]     = mxDp[1]     = std::numeric_limits<size_t>::max();
-						mxUg[0]     = mxUg[1]     = std::numeric_limits<size_t>::max();
-						mxIter[0]   = mxIter[1]   = std::numeric_limits<size_t>::max();
-					} else if(khits > 1) {
-						for(size_t mate = 0; mate < 2; mate++) {
-							streak[mate]   += (khits-1) * maxStreakIncr;
-							mtStreak[mate] += (khits-1) * maxStreakIncr;
-							mxDp[mate]     += (khits-1) * maxItersIncr;
-							mxUg[mate]     += (khits-1) * maxItersIncr;
-							mxIter[mate]   += (khits-1) * maxItersIncr;
-						}
-					}
-					if(rstate.filt[0] && rstate.filt[1]) {
-						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
-						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
-						assert_gt(streak[1], 0);
-					}
-					rstate.prm.maxDPFails = streak[0];
-					assert_gt(streak[0], 0);
-					// Calculate # seed rounds for each mate
-					size_t nrounds[2] = { nSeedRounds, nSeedRounds };
-					if(rstate.filt[0] && rstate.filt[1]) {
-						nrounds[0] = (size_t)ceil((double)nrounds[0] / 2.0);
-						nrounds[1] = (size_t)ceil((double)nrounds[1] / 2.0);
-						assert_gt(nrounds[1], 0);
-					}
-					assert_gt(nrounds[0], 0);
+					rstate.compute_streak();
 					// Increment counters according to what got filtered
 					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 						if(!rstate.filt[mate]) {
@@ -3407,10 +3430,16 @@ static void multiseedSearchWorker(void *vp) {
 							olm.ubases += rdlens[mate]; // bases passing filter
 						}
 					}
-					size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
+					const size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 					// Whether we're done with mate1 / mate2
 					bool done[2] = { !rstate.filt[0], !rstate.filt[1] };
 					size_t nelt[2] = {0, 0};
+
+					size_t minedfw[2] = { 0, 0 };
+					size_t minedrc[2] = { 0, 0 };
+					size_t matemap[2] = { 0, 1 };
+
+					rstate.exhaustive[0] = rstate.exhaustive[1] = false;
 
 						// Find end-to-end exact alignments for each read
 						if(doExactUpFront) {
@@ -3424,8 +3453,8 @@ static void multiseedSearchWorker(void *vp) {
 									ebwtFw,        // index
 									rstate.rds(mate),    // read
 									sc,            // scoring scheme
-									nofw[mate],    // nofw?
-									norc[mate],    // norc?
+									rstate.nofw[mate],    // nofw?
+									rstate.norc[mate],    // norc?
 									2,             // max # edits we care about
 									minedfw[mate], // minimum # edits for fw mate
 									minedrc[mate], // minimum # edits for rc mate
@@ -3484,19 +3513,19 @@ static void multiseedSearchWorker(void *vp) {
 										0,              // interval between seeds
 										rstate.minsc[mate],    // min score for anchor
 										rstate.minsc[mate^1],  // min score for opp.
-										nceil[mate],    // N ceil for anchor
-										nceil[mate^1],  // N ceil for opp.
-										nofw[mate],     // don't align forward read
-										norc[mate],     // don't align revcomp read
+										rstate.nceil[mate],    // N ceil for anchor
+										rstate.nceil[mate^1],  // N ceil for opp.
+										rstate.nofw[mate],     // don't align forward read
+										rstate.norc[mate],     // don't align revcomp read
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
-										streak[mate],   // stop after streak of this many dp fails
-										mtStreak[mate], // max mate fails per seed range
+										rstate.mxIter[mate],   // max extend loop iters
+										rstate.mxUg[mate],     // max # ungapped extends
+										rstate.mxDp[mate],     // max # DPs
+										rstate.streak[mate],   // stop after streak of this many end-to-end fails
+										rstate.streak[mate],   // stop after streak of this many ungap fails
+										rstate.streak[mate],   // stop after streak of this many dp fails
+										rstate.mtStreak[mate], // max mate fails per seed range
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -3531,14 +3560,14 @@ static void multiseedSearchWorker(void *vp) {
 										0,              // length of a seed
 										0,              // interval between seeds
 										rstate.minsc[mate],    // minimum score for valid
-										nceil[mate],    // N ceil for anchor
+										rstate.nceil[mate],    // N ceil for anchor
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
+										rstate.mxIter[mate],   // max extend loop iters
+										rstate.mxUg[mate],     // max # ungapped extends
+										rstate.mxDp[mate],     // max # DPs
+										rstate.streak[mate],   // stop after streak of this many end-to-end fails
+										rstate.streak[mate],   // stop after streak of this many ungap fails
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -3608,8 +3637,8 @@ static void multiseedSearchWorker(void *vp) {
 								//rstate.rnd.init(ROTL(rstate.rds(mate).seed, 10));
 								assert(rstate.shs[mate].empty());
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
-								bool yfw = minedfw[mate] <= 1 && !nofw[mate];
-								bool yrc = minedrc[mate] <= 1 && !norc[mate];
+								bool yfw = minedfw[mate] <= 1 && !rstate.nofw[mate];
+								bool yrc = minedrc[mate] <= 1 && !rstate.norc[mate];
 								if(yfw || yrc) {
 									// Clear out the exact hits
 									swmSeed.mm1atts++;
@@ -3666,19 +3695,19 @@ static void multiseedSearchWorker(void *vp) {
 										0,              // interval between seeds
 										rstate.minsc[mate],    // min score for anchor
 										rstate.minsc[mate^1],  // min score for opp.
-										nceil[mate],    // N ceil for anchor
-										nceil[mate^1],  // N ceil for opp.
-										nofw[mate],     // don't align forward read
-										norc[mate],     // don't align revcomp read
+										rstate.nceil[mate],    // N ceil for anchor
+										rstate.nceil[mate^1],  // N ceil for opp.
+										rstate.nofw[mate],     // don't align forward read
+										rstate.norc[mate],     // don't align revcomp read
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
-										streak[mate],   // stop after streak of this many dp fails
-										mtStreak[mate], // max mate fails per seed range
+										rstate.mxIter[mate],   // max extend loop iters
+										rstate.mxUg[mate],     // max # ungapped extends
+										rstate.mxDp[mate],     // max # DPs
+										rstate.streak[mate],   // stop after streak of this many end-to-end fails
+										rstate.streak[mate],   // stop after streak of this many ungap fails
+										rstate.streak[mate],   // stop after streak of this many dp fails
+										rstate.mtStreak[mate], // max mate fails per seed range
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -3713,14 +3742,14 @@ static void multiseedSearchWorker(void *vp) {
 										0,              // length of a seed
 										0,              // interval between seeds
 										rstate.minsc[mate],    // minimum score for valid
-										nceil[mate],    // N ceil for anchor
+										rstate.nceil[mate],    // N ceil for anchor
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
+										rstate.mxIter[mate],   // max extend loop iters
+										rstate.mxUg[mate],     // max # ungapped extends
+										rstate.mxDp[mate],     // max # DPs
+										rstate.streak[mate],   // stop after streak of this many end-to-end fails
+										rstate.streak[mate],   // stop after streak of this many ungap fails
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -3774,8 +3803,8 @@ static void multiseedSearchWorker(void *vp) {
 							}
 						}
 						int seedlens[2] = { multiseedLen, multiseedLen };
-						nrounds[0] = min<size_t>(nrounds[0], interval[0]);
-						nrounds[1] = min<size_t>(nrounds[1], interval[1]);
+						rstate.nrounds[0] = min<size_t>(rstate.nrounds[0], rstate.interval[0]);
+						rstate.nrounds[1] = min<size_t>(rstate.nrounds[1], rstate.interval[1]);
 						Constraint gc = Constraint::penaltyFuncBased(scoreMin);
 						size_t seedsTried = 0;
 					size_t seedsTriedMS[] = {0, 0, 0, 0};
@@ -3802,17 +3831,17 @@ static void multiseedSearchWorker(void *vp) {
 									done[mate] = true;
 									continue;
 								}
-								if(roundi >= nrounds[mate]) {
+								if(roundi >= rstate.nrounds[mate]) {
 									// Not doing this round for this mate
 									continue;
 								}
 								// Figure out the seed offset
-								if(interval[mate] <= (int)roundi) {
+								if(rstate.interval[mate] <= (int)roundi) {
 									// Can't do this round, seeds already packed as
 									// tight as possible
 									continue;
 								}
-								size_t offset = (interval[mate] * roundi) / nrounds[mate];
+								size_t offset = (rstate.interval[mate] * roundi) / rstate.nrounds[mate];
 								assert(roundi == 0 || offset > 0);
 								assert(!rstate.msinkwrap.maxed());
 								assert(rstate.msinkwrap.repOk());
@@ -3836,11 +3865,11 @@ static void multiseedSearchWorker(void *vp) {
 								std::pair<int, int> inst = al.instantiateSeeds(
 									rstate.seeds(mate),   // search seeds
 									offset,         // offset to begin extracting
-									interval[mate], // interval between seeds
+									rstate.interval[mate], // interval between seeds
 									rstate.rds(mate),     // read to align
 									sc,             // scoring scheme
-									nofw[mate],     // don't align forward read
-									norc[mate],     // don't align revcomp read
+									rstate.nofw[mate],     // don't align forward read
+									rstate.norc[mate],     // don't align revcomp read
 									rstate.ca,             // holds some seed hits from previous reads
 									rstate.shs[mate],      // holds all the seed hits
 								sdm,            // metrics
@@ -3939,22 +3968,22 @@ static void multiseedSearchWorker(void *vp) {
 											pepol,          // paired-end policy
 											multiseedMms,   // # mms allowed in a seed
 											seedlens[mate], // length of a seed
-											interval[mate], // interval between seeds
+											rstate.interval[mate], // interval between seeds
 											rstate.minsc[mate],    // min score for anchor
 											rstate.minsc[mate^1],  // min score for opp.
-											nceil[mate],    // N ceil for anchor
-											nceil[mate^1],  // N ceil for opp.
-											nofw[mate],     // don't align forward read
-											norc[mate],     // don't align revcomp read
+											rstate.nceil[mate],    // N ceil for anchor
+											rstate.nceil[mate^1],  // N ceil for opp.
+											rstate.nofw[mate],     // don't align forward read
+											rstate.norc[mate],     // don't align revcomp read
 											maxhalf,        // max width on one DP side
 											doUngapped,     // do ungapped alignment
-											mxIter[mate],   // max extend loop iters
-											mxUg[mate],     // max # ungapped extends
-											mxDp[mate],     // max # DPs
-											streak[mate],   // stop after streak of this many end-to-end fails
-											streak[mate],   // stop after streak of this many ungap fails
-											streak[mate],   // stop after streak of this many dp fails
-											mtStreak[mate], // max mate fails per seed range
+											rstate.mxIter[mate],   // max extend loop iters
+											rstate.mxUg[mate],     // max # ungapped extends
+											rstate.mxDp[mate],     // max # DPs
+											rstate.streak[mate],   // stop after streak of this many end-to-end fails
+											rstate.streak[mate],   // stop after streak of this many ungap fails
+											rstate.streak[mate],   // stop after streak of this many dp fails
+											rstate.mtStreak[mate], // max mate fails per seed range
 											doExtend,       // extend seed hits
 											enable8,        // use 8-bit SSE where possible
 											cminlen,        // checkpoint if read is longer
@@ -3987,16 +4016,16 @@ static void multiseedSearchWorker(void *vp) {
 											sc,             // scoring scheme
 											multiseedMms,   // # mms allowed in a seed
 											seedlens[mate], // length of a seed
-											interval[mate], // interval between seeds
+											rstate.interval[mate], // interval between seeds
 											rstate.minsc[mate],    // minimum score for valid
-											nceil[mate],    // N ceil for anchor
+											rstate.nceil[mate],    // N ceil for anchor
 											maxhalf,        // max width on one DP side
 											doUngapped,     // do ungapped alignment
-											mxIter[mate],   // max extend loop iters
-											mxUg[mate],     // max # ungapped extends
-											mxDp[mate],     // max # DPs
-											streak[mate],   // stop after streak of this many end-to-end fails
-											streak[mate],   // stop after streak of this many ungap fails
+											rstate.mxIter[mate],   // max extend loop iters
+											rstate.mxUg[mate],     // max # ungapped extends
+											rstate.mxDp[mate],     // max # DPs
+											rstate.streak[mate],   // stop after streak of this many end-to-end fails
+											rstate.streak[mate],   // stop after streak of this many ungap fails
 											doExtend,       // extend seed hits
 											enable8,        // use 8-bit SSE where possible
 											cminlen,        // checkpoint if read is longer
@@ -4074,7 +4103,7 @@ static void multiseedSearchWorker(void *vp) {
 						for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 							if(rstate.filt[mate]) {
 								size_t len = rdlens[mate];
-								if(!nofw[mate] && !norc[mate]) {
+								if(!rstate.nofw[mate] && !rstate.norc[mate]) {
 									len *= 2;
 								}
 								totnucs += len;
@@ -4085,14 +4114,14 @@ static void multiseedSearchWorker(void *vp) {
 						rstate.prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 					}
 						for(size_t i = 0; i < 2; i++) {
-							assert_leq(rstate.prm.nExIters, mxIter[i]);
-							assert_leq(rstate.prm.nExDps,   mxDp[i]);
-							assert_leq(rstate.prm.nMateDps, mxDp[i]);
-							assert_leq(rstate.prm.nExUgs,   mxUg[i]);
-							assert_leq(rstate.prm.nMateUgs, mxUg[i]);
-							assert_leq(rstate.prm.nDpFail,  streak[i]);
-							assert_leq(rstate.prm.nUgFail,  streak[i]);
-							assert_leq(rstate.prm.nEeFail,  streak[i]);
+							assert_leq(rstate.prm.nExIters, rstate.mxIter[i]);
+							assert_leq(rstate.prm.nExDps,   rstate.mxDp[i]);
+							assert_leq(rstate.prm.nMateDps, rstate.mxDp[i]);
+							assert_leq(rstate.prm.nExUgs,   rstate.mxUg[i]);
+							assert_leq(rstate.prm.nMateUgs, rstate.mxUg[i]);
+							assert_leq(rstate.prm.nDpFail,  rstate.streak[i]);
+							assert_leq(rstate.prm.nUgFail,  rstate.streak[i]);
+							assert_leq(rstate.prm.nEeFail,  rstate.streak[i]);
 						}
 
 				// Commit and report paired-end/unpaired alignments
