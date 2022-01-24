@@ -3802,7 +3802,7 @@ static void multiseedSearchWorker(void *vp) {
 								}
 							}
 						}
-						int seedlens[2] = { multiseedLen, multiseedLen };
+						const int seedlens[2] = { multiseedLen, multiseedLen };
 						rstate.nrounds[0] = min<size_t>(rstate.nrounds[0], rstate.interval[0]);
 						rstate.nrounds[1] = min<size_t>(rstate.nrounds[1], rstate.interval[1]);
 						Constraint gc = Constraint::penaltyFuncBased(scoreMin);
@@ -4098,7 +4098,8 @@ static void multiseedSearchWorker(void *vp) {
 							rstate.prm.seedPctRepMS[i] = -1.0f;
 							rstate.prm.seedHitAvgMS[i] = -1.0f;
 						}
-						}
+					}
+					{
 						size_t totnucs = 0;
 						for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 							if(rstate.filt[mate]) {
@@ -4109,9 +4110,10 @@ static void multiseedSearchWorker(void *vp) {
 								totnucs += len;
 							}
 						}
-					rstate.prm.seedsPerNuc = totnucs > 0 ? ((float)seedsTried / totnucs) : -1;
-					for(int i = 0; i < 4; i++) {
-						rstate.prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
+						rstate.prm.seedsPerNuc = totnucs > 0 ? ((float)seedsTried / totnucs) : -1;
+						for(int i = 0; i < 4; i++) {
+							rstate.prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
+						}
 					}
 						for(size_t i = 0; i < 2; i++) {
 							assert_leq(rstate.prm.nExIters, rstate.mxIter[i]);
