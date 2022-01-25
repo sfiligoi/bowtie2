@@ -2979,9 +2979,6 @@ private:
 	EList<Seed> seeds1, seeds2;
 
 public:
-	// Keep track of whether last search was exhaustive for mates 1 and 2
-	bool exhaustive[2];
-
 	// Calculate the minimum valid score threshold for the read
 	TAlScore minsc[2];
 	// Keep track of whether mates 1/2 were filtered out last time through
@@ -2997,6 +2994,8 @@ public:
 	// Keep track of whether mates 1/2 were filtered out by upstream qc
 	bool qcfilt[2];
 
+	size_t minedfw[2];
+	size_t minedrc[2];
 	bool nofw[2];
 	bool norc[2];
 	int nceil[2];
@@ -3010,6 +3009,13 @@ public:
 	size_t mxIter[2];
 	// Calculate # seed rounds for each mate
 	size_t nrounds[2];
+
+	// Keep track of whether last search was exhaustive for mates 1 and 2
+	bool exhaustive[2];
+
+	bool   done[2];
+	size_t nelt[2];
+	size_t matemap[2];
 
 public:
 	Constraint gc;
@@ -3049,13 +3055,14 @@ public:
                         gReportMixed)     // report unpaired alignments for paired reads?
 	, bmapq(new_mapq(mapqv, scoreMin, *multiseed_sc))
 	, seeds1(), seeds2()
-	, exhaustive{ false, false }
 	, minsc{ std::numeric_limits<TAlScore>::max(), std::numeric_limits<TAlScore>::max() }
 	, filt{ true, true }
 	, nfilt{ true, true }
 	, scfilt{ true, true }
 	, lenfilt{ true, true }
 	, qcfilt{ true, true }
+	, minedfw{ 0, 0 }
+	, minedrc{ 0, 0 }
 	, nofw{ false, false }
 	, norc{ false, false }
 	, nceil{ 0, 0 }
@@ -3066,6 +3073,10 @@ public:
 	, mxUg{     maxUg,         maxUg       }
 	, mxIter{   maxIters,      maxIters    }
 	, nrounds{ nSeedRounds, nSeedRounds }
+	, exhaustive{ false, false }
+	, done{ false, false}
+	, nelt{ 0, 0}
+	, matemap{ 0, 1 }
 	, gc()
 	, seedsTried(0)
 	, seedsTriedMS{0, 0, 0, 0}
@@ -3150,10 +3161,14 @@ public:
 					prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
 	}
 
-	// compute nofw,norc,ncel,interval,*streak,nrounds
+	// compute mined*, nofw,norc,ncel,interval,*streak,nrounds
 	void compute_streak() {
 					bool paired = rds_paired();
 					const size_t rdlens[2] = { rdlen(0), rdlen(1) };
+
+					// reset mined*
+					minedfw[0] = minedfw[1] = 0;
+					minedrc[0] = minedrc[1] = 0;
 
 					// Calcualte nofw / no rc
 					nofw[0] = paired ? (gMate1fw ? gNofw : gNorc) : gNofw;
@@ -3290,6 +3305,16 @@ public:
 							prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 						}
 					}
+	}
+
+	// set done, exhaustive, nelt and matemap
+	void reset_matemap() {
+		for (int i = 0; i < 2; i++) {
+			exhaustive[i] = false;
+			done[i] = !filt[i];
+			nelt[i] = 0;
+			matemap[i] = i;
+		}
 	}
 
 private:
@@ -3528,36 +3553,30 @@ static void multiseedSearchWorker(void *vp) {
 					}
 					const size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 					// Whether we're done with mate1 / mate2
-					bool done[2] = { !rstate.filt[0], !rstate.filt[1] };
-					size_t nelt[2] = {0, 0};
 
-					size_t minedfw[2] = { 0, 0 };
-					size_t minedrc[2] = { 0, 0 };
-					size_t matemap[2] = { 0, 1 };
-
-					rstate.exhaustive[0] = rstate.exhaustive[1] = false;
+					rstate.reset_matemap();
 
 						// Find end-to-end exact alignments for each read
 						if(doExactUpFront) {
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
-								size_t mate = matemap[matei];
-								if(!rstate.filt[mate] || done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
+								size_t mate = rstate.matemap[matei];
+								if(!rstate.filt[mate] || rstate.done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									continue;
 								}
 								swmSeed.exatts++;
-								nelt[mate] = al.exactSweep(
+								rstate.nelt[mate] = al.exactSweep(
 									ebwtFw,        // index
 									rstate.rds(mate),    // read
 									sc,            // scoring scheme
 									rstate.nofw[mate],    // nofw?
 									rstate.norc[mate],    // norc?
 									2,             // max # edits we care about
-									minedfw[mate], // minimum # edits for fw mate
-									minedrc[mate], // minimum # edits for rc mate
+									rstate.minedfw[mate], // OUT: minimum # edits for fw mate
+									rstate.minedrc[mate], // OUT: minimum # edits for rc mate
 									true,          // report 0mm hits
 									rstate.shs[mate],     // put end-to-end results here
 									sdm);          // metrics
-								size_t bestmin = min(minedfw[mate], minedrc[mate]);
+								size_t bestmin = min(rstate.minedfw[mate], rstate.minedrc[mate]);
 								if(bestmin == 0) {
 									sdm.bestmin0++;
 								} else if(bestmin == 1) {
@@ -3567,21 +3586,21 @@ static void multiseedSearchWorker(void *vp) {
 									sdm.bestmin2++;
 								}
 							}
-							matemap[0] = 0; matemap[1] = 1;
-							if(nelt[0] > 0 && nelt[1] > 0 && nelt[0] > nelt[1]) {
+							rstate.matemap[0] = 0; rstate.matemap[1] = 1;
+							if(rstate.nelt[0] > 0 && rstate.nelt[1] > 0 && rstate.nelt[0] > rstate.nelt[1]) {
 								// Do the mate with fewer exact hits first
 								// TODO: Consider mates & orientations separately?
-								matemap[0] = 1; matemap[1] = 0;
+								rstate.matemap[0] = 1; rstate.matemap[1] = 0;
 							}
 							for(size_t matei = 0; matei < (seedSumm ? 0:2); matei++) {
-								size_t mate = matemap[matei];
-								if(nelt[mate] == 0 || nelt[mate] > eePeEeltLimit) {
+								size_t mate = rstate.matemap[matei];
+								if(rstate.nelt[mate] == 0 || rstate.nelt[mate] > eePeEeltLimit) {
 									rstate.shs[mate].clearExactE2eHits();
 									continue;
 								}
 								if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									rstate.shs[mate].clearExactE2eHits();
-									done[mate] = true;
+									rstate.done[mate] = true;
 									continue;
 								}
 								assert(rstate.filt[mate]);
@@ -3690,17 +3709,17 @@ static void multiseedSearchWorker(void *vp) {
 								} else if(ret == EXTEND_POLICY_FULFILLED) {
 									// Policy is satisfied for this mate at least
 									if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
-										done[mate] = true;
+										rstate.done[mate] = true;
 									}
 									if(rstate.msinkwrap.state().doneWithMate(mate == 1)) {
-										done[mate^1] = true;
+										rstate.done[mate^1] = true;
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
 									// We exhausted this mode at least
-									done[mate] = true;
+									rstate.done[mate] = true;
 								} else if(ret == EXTEND_EXCEEDED_HARD_LIMIT) {
 									// We exceeded a per-read limit
-									done[mate] = true;
+									rstate.done[mate] = true;
 								} else if(ret == EXTEND_EXCEEDED_SOFT_LIMIT) {
 									// Not done yet
 								} else {
@@ -3708,10 +3727,10 @@ static void multiseedSearchWorker(void *vp) {
 									cerr << "Bad return value: " << ret << endl;
 									throw 1;
 								}
-								if(!done[mate]) {
+								if(!rstate.done[mate]) {
 									TAlScore perfectScore = sc.perfectScore(rdlens[mate]);
-									if(!done[mate] && rstate.minsc[mate] == perfectScore) {
-										done[mate] = true;
+									if(!rstate.done[mate] && rstate.minsc[mate] == perfectScore) {
+										rstate.done[mate] = true;
 									}
 								}
 							}
@@ -3720,21 +3739,21 @@ static void multiseedSearchWorker(void *vp) {
 						// 1-mismatch
 						if(do1mmUpFront && !seedSumm) {
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
-								size_t mate = matemap[matei];
-								if(!rstate.filt[mate] || done[mate] || nelt[mate] > eePeEeltLimit) {
+								size_t mate = rstate.matemap[matei];
+								if(!rstate.filt[mate] || rstate.done[mate] || rstate.nelt[mate] > eePeEeltLimit) {
 									// Done with this mate
 									rstate.shs[mate].clear1mmE2eHits();
-									nelt[mate] = 0;
+									rstate.nelt[mate] = 0;
 									continue;
 								}
-								nelt[mate] = 0;
+								rstate.nelt[mate] = 0;
 								assert(!rstate.msinkwrap.maxed());
 								assert(rstate.msinkwrap.repOk());
 								//rstate.rnd.init(ROTL(rstate.rds(mate).seed, 10));
 								assert(rstate.shs[mate].empty());
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
-								bool yfw = minedfw[mate] <= 1 && !rstate.nofw[mate];
-								bool yrc = minedrc[mate] <= 1 && !rstate.norc[mate];
+								bool yfw = rstate.minedfw[mate] <= 1 && !rstate.nofw[mate];
+								bool yrc = rstate.minedrc[mate] <= 1 && !rstate.norc[mate];
 								if(yfw || yrc) {
 									// Clear out the exact hits
 									swmSeed.mm1atts++;
@@ -3751,23 +3770,23 @@ static void multiseedSearchWorker(void *vp) {
 										true,           // do 1mm
 										rstate.shs[mate],      // seed hits (hits installed here)
 										sdm);           // metrics
-									nelt[mate] = rstate.shs[mate].num1mmE2eHits();
+									rstate.nelt[mate] = rstate.shs[mate].num1mmE2eHits();
 								}
 							}
 							// Possibly reorder the mates
-							matemap[0] = 0; matemap[1] = 1;
-							if(nelt[0] > 0 && nelt[1] > 0 && nelt[0] > nelt[1]) {
+							rstate.matemap[0] = 0; rstate.matemap[1] = 1;
+							if(rstate.nelt[0] > 0 && rstate.nelt[1] > 0 && rstate.nelt[0] > rstate.nelt[1]) {
 								// Do the mate with fewer exact hits first
 								// TODO: Consider mates & orientations separately?
-								matemap[0] = 1; matemap[1] = 0;
+								rstate.matemap[0] = 1; rstate.matemap[1] = 0;
 							}
 							for(size_t matei = 0; matei < (seedSumm ? 0:2); matei++) {
-								size_t mate = matemap[matei];
-								if(nelt[mate] == 0 || nelt[mate] > eePeEeltLimit) {
+								size_t mate = rstate.matemap[matei];
+								if(rstate.nelt[mate] == 0 || rstate.nelt[mate] > eePeEeltLimit) {
 									continue;
 								}
 								if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
-									done[mate] = true;
+									rstate.done[mate] = true;
 									continue;
 								}
 								int ret = 0;
@@ -3872,17 +3891,17 @@ static void multiseedSearchWorker(void *vp) {
 								} else if(ret == EXTEND_POLICY_FULFILLED) {
 									// Policy is satisfied for this mate at least
 									if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
-										done[mate] = true;
+										rstate.done[mate] = true;
 									}
 									if(rstate.msinkwrap.state().doneWithMate(mate == 1)) {
-										done[mate^1] = true;
+										rstate.done[mate^1] = true;
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
 									// We exhausted this mode at least
-									done[mate] = true;
+									rstate.done[mate] = true;
 								} else if(ret == EXTEND_EXCEEDED_HARD_LIMIT) {
 									// We exceeded a per-read limit
-									done[mate] = true;
+									rstate.done[mate] = true;
 								} else if(ret == EXTEND_EXCEEDED_SOFT_LIMIT) {
 									// Not done yet
 								} else {
@@ -3890,10 +3909,10 @@ static void multiseedSearchWorker(void *vp) {
 									cerr << "Bad return value: " << ret << endl;
 									throw 1;
 								}
-								if(!done[mate]) {
+								if(!rstate.done[mate]) {
 									TAlScore perfectScore = sc.perfectScore(rdlens[mate]);
-									if(!done[mate] && rstate.minsc[mate] == perfectScore) {
-										done[mate] = true;
+									if(!rstate.done[mate] && rstate.minsc[mate] == perfectScore) {
+										rstate.done[mate] = true;
 									}
 								}
 							}
@@ -3916,10 +3935,10 @@ static void multiseedSearchWorker(void *vp) {
 							//	if(seedlens[1] > 8) seedlens[1]--;
 							//}
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
-								size_t mate = matemap[matei];
-								if(done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
+								size_t mate = rstate.matemap[matei];
+								if(rstate.done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									// Done with this mate
-									done[mate] = true;
+									rstate.done[mate] = true;
 									continue;
 								}
 								if(roundi >= rstate.nrounds[mate]) {
@@ -3970,7 +3989,7 @@ static void multiseedSearchWorker(void *vp) {
 								if(inst.first + inst.second == 0) {
 									// No seed hits!  Done with this mate.
 									assert(rstate.shs[mate].empty());
-									done[mate] = true;
+									rstate.done[mate] = true;
 									break;
 								}
 								rstate.set_seeds_tried(mate, inst, instFw, instRc);
@@ -3988,7 +4007,7 @@ static void multiseedSearchWorker(void *vp) {
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								if(rstate.shs[mate].empty()) {
 									// No seed alignments!  Done with this mate.
-									done[mate] = true;
+									rstate.done[mate] = true;
 									break;
 								}
 							}
@@ -4002,18 +4021,18 @@ static void multiseedSearchWorker(void *vp) {
 								}
 							  }
 							  // Possibly reorder the mates
-							  matemap[0] = 0; matemap[1] = 1;
+							  rstate.matemap[0] = 0; rstate.matemap[1] = 1;
 							  if(!rstate.shs[0].empty() && !rstate.shs[1].empty() && uniqFactor[1] > uniqFactor[0]) {
 								// Do the mate with fewer exact hits first
 								// TODO: Consider mates & orientations separately?
-								matemap[0] = 1; matemap[1] = 0;
+								rstate.matemap[0] = 1; rstate.matemap[1] = 0;
 							  }
 							}
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
-								size_t mate = matemap[matei];
-								if(done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
+								size_t mate = rstate.matemap[matei];
+								if(rstate.done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									// Done with this mate
-									done[mate] = true;
+									rstate.done[mate] = true;
 									continue;
 								}
 								assert(!rstate.msinkwrap.maxed());
@@ -4126,17 +4145,17 @@ static void multiseedSearchWorker(void *vp) {
 									} else if(ret == EXTEND_POLICY_FULFILLED) {
 										// Policy is satisfied for this mate at least
 										if(rstate.msinkwrap.state().doneWithMate(mate == 0)) {
-											done[mate] = true;
+											rstate.done[mate] = true;
 										}
 										if(rstate.msinkwrap.state().doneWithMate(mate == 1)) {
-											done[mate^1] = true;
+											rstate.done[mate^1] = true;
 										}
 									} else if(ret == EXTEND_PERFECT_SCORE) {
 										// We exhausted this made at least
-										done[mate] = true;
+										rstate.done[mate] = true;
 									} else if(ret == EXTEND_EXCEEDED_HARD_LIMIT) {
 										// We exceeded a per-read limit
-										done[mate] = true;
+										rstate.done[mate] = true;
 									} else if(ret == EXTEND_EXCEEDED_SOFT_LIMIT) {
 										// Not done yet
 									} else {
@@ -4151,8 +4170,8 @@ static void multiseedSearchWorker(void *vp) {
 							// mates.  We continue on a mate only if its average
 							// interval length is high (> 1000)
 							for(size_t mate = 0; mate < 2; mate++) {
-								if(!done[mate] && rstate.shs[mate].averageHitsPerSeed() < seedBoostThresh) {
-									done[mate] = true;
+								if(!rstate.done[mate] && rstate.shs[mate].averageHitsPerSeed() < seedBoostThresh) {
+									rstate.done[mate] = true;
 								}
 							}
 						} // end loop over reseeding rounds
