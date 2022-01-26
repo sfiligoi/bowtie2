@@ -3185,7 +3185,7 @@ public:
 						nceil[1] = 0;
 					}
 					// Calculate interval length for both mates
-					interval[1]=0;
+					interval[0] = interval[1] = 0;
 					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 						interval[mate] = msIval.f<int>((double)rdlens[mate]);
 						if(filt[0] && filt[1]) {
@@ -3209,6 +3209,12 @@ public:
 							mxUg[mate]     += (khits-1) * maxItersIncr;
 							mxIter[mate]   += (khits-1) * maxItersIncr;
 						}
+					} else {
+						streak[0]   = streak[1]   = maxDpStreak;
+						mtStreak[0] = mtStreak[1] = maxMateStreak;
+						mxDp[0]     = mxDp[1]     = maxDp;
+						mxUg[0]     = mxUg[1]     = maxUg;
+						mxIter[0]   = mxIter[1]   = maxIters;
 					}
 					if(filt[0] && filt[1]) {
 						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
