@@ -3171,18 +3171,19 @@ public:
 					minedrc[0] = minedrc[1] = 0;
 
 					// Calcualte nofw / no rc
+					nofw[0] = nofw[1] = false;
+					norc[0] = norc[1] = false;
 					nofw[0] = paired ? (gMate1fw ? gNofw : gNorc) : gNofw;
 					norc[0] = paired ? (gMate1fw ? gNorc : gNofw) : gNorc;
 					nofw[1] = paired ? (gMate2fw ? gNofw : gNorc) : gNofw;
 					norc[1] = paired ? (gMate2fw ? gNorc : gNofw) : gNorc;
 					// Calculate nceil
+					nceil[0] = nceil[1] = 0;
 					nceil[0] = nCeil.f<int>((double)rdlens[0]);
 					nceil[0] = min(nceil[0], (int)rdlens[0]);
 					if(paired) {
 						nceil[1] = nCeil.f<int>((double)rdlens[1]);
 						nceil[1] = min(nceil[1], (int)rdlens[1]);
-					} else {
-						nceil[1] = 0;
 					}
 					// Calculate interval length for both mates
 					interval[0] = interval[1] = 0;
@@ -3195,6 +3196,11 @@ public:
 						interval[mate] = max(interval[mate], 1);
 					}
 					// Calculate streak length
+					streak[0]   = streak[1]   = maxDpStreak;
+					mtStreak[0] = mtStreak[1] = maxMateStreak;
+					mxDp[0]     = mxDp[1]     = maxDp;
+					mxUg[0]     = mxUg[1]     = maxUg;
+					mxIter[0]   = mxIter[1]   = maxIters;
 					if(allHits) {
 						streak[0]   = streak[1]   = std::numeric_limits<size_t>::max();
 						mtStreak[0] = mtStreak[1] = std::numeric_limits<size_t>::max();
@@ -3209,12 +3215,6 @@ public:
 							mxUg[mate]     += (khits-1) * maxItersIncr;
 							mxIter[mate]   += (khits-1) * maxItersIncr;
 						}
-					} else {
-						streak[0]   = streak[1]   = maxDpStreak;
-						mtStreak[0] = mtStreak[1] = maxMateStreak;
-						mxDp[0]     = mxDp[1]     = maxDp;
-						mxUg[0]     = mxUg[1]     = maxUg;
-						mxIter[0]   = mxIter[1]   = maxIters;
 					}
 					if(filt[0] && filt[1]) {
 						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
