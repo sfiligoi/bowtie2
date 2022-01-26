@@ -3379,6 +3379,9 @@ static void multiseedSearchWorker(void *vp) {
 		Timer timer(std::cout, msg.c_str());
 #endif
 
+		// TODO: Make it configurable
+		const uint32_t states_per_worker = 32;
+
 		// Sinks: these are so that we can print tables encoding counts for
 		// events of interest on a per-read, per-seed, per-join, or per-SW
 		// level.  These in turn can be used to diagnose performance
@@ -3387,7 +3390,11 @@ static void multiseedSearchWorker(void *vp) {
 		//const BitPairReference& refs   = *multiseed_refs;
 		unique_ptr<PatternSourcePerThreadFactory> patsrcFact(createPatsrcFactory(patsrc, pp, tid));
 
-		ReadState rstate(tid, *patsrcFact);
+		vector< unique_ptr<ReadState> > rstatev;
+		rstatev.reserve(states_per_worker);
+		for (uint32_t i=0; i<states_per_worker; i++) {
+			rstatev.push_back(std::unique_ptr<ReadState>(new ReadState(tid, *patsrcFact)));
+		}
 
 		// Write dynamic-programming problem descriptions here
 		ofstream *dpLog = NULL, *dpLogOpp = NULL;
@@ -3442,17 +3449,23 @@ static void multiseedSearchWorker(void *vp) {
 			gExpandToFrag);
 
 		PerfMetrics metricsPt; // per-thread metrics object; for read-level metrics
-		BTString nametmp;
 
 		// Used by thread with threadid == 1 to measure time elapsed
 		time_t iTime = time(0);
 
 
 		rndArb.init((uint32_t)time(0));
+		const int mergeival = 16;
+
 		int mergei = 0;
-		int mergeival = 16;
 		bool done = false;
 		while(!done) {
+		  uint32_t nstates = rstatev.size();
+		  {
+		    uint32_t i=0;
+		    // try to read nps values... if case of soft error, retry
+		    while((i<nstates) && (!done)) {
+			ReadState &rstate = *(rstatev[i]);
 			pair<bool, bool> ret = rstate.ps->nextReadPair();
 			bool success = ret.first;
 			done = ret.second;
@@ -3472,8 +3485,29 @@ static void multiseedSearchWorker(void *vp) {
 				sample = rstate.rnd.nextFloat() < sampleFrac;
 			}
 			if(rdid >= skipReads && rdid < qUpto && sample) {
-				// Align this read/pair
-				bool retry = true;
+				// valid, will do full processing
+			} else if(rdid >= qUpto) {
+				break;
+			} else {
+				// only need to worry about metrics here, all others are below
+				if(metricsPerRead) {
+					MERGE_METRICS(metricsPt);
+					BTString nametmp = rstate.rds(0).name;
+					metricsPt.reportInterval(
+						metricsOfb, metricsStderr, true, &nametmp);
+					metricsPt.reset();
+				}
+				continue;
+			}
+			i++;
+		    } // while
+		    if (done && (i<nstates)) {
+			rstatev.resize(i);
+			nstates = rstatev.size();
+		    }
+		  } // i loop
+		  if (done && (nstates==0)) break;
+
 				//
 				// Check if there is metrics reporting for us to do.
 				//
@@ -3496,11 +3530,16 @@ static void multiseedSearchWorker(void *vp) {
 						}
 					}
 				}
+
+			for (auto & prstate : rstatev) {
+				ReadState &rstate = *prstate;
 				rstate.prm.reset(); // per-read metrics
 				rstate.prm.doFmString = false;
 				if(sam_print_xt) {
 					gettimeofday(&rstate.prm.tv_beg, &rstate.prm.tz_beg);
 				}
+			}
+
 #ifdef PER_THREAD_TIMING
 				int cpu = 0, node = 0;
 				get_cpu_and_node(cpu, node);
@@ -3513,8 +3552,15 @@ static void multiseedSearchWorker(void *vp) {
 					current_node = node;
 				}
 #endif
+			for (auto & prstate : rstatev) {
+				// Align this read/pair
+				bool retry = true;
+
 				// Try to align this read
 				while(retry) {
+					ReadState &rstate = *prstate;
+					TReadId rdid = rstate.rds(0).rdid;
+
 					retry = false;
 					rstate.ca.nextRead(); // clear the cache
 					olm.reads++;
@@ -4219,17 +4265,19 @@ static void multiseedSearchWorker(void *vp) {
 					xeq);
 				assert(!retry || rstate.msinkwrap.empty());
 			} // while(retry)
-		} // if(rdid >= skipReads && rdid < qUpto)
-		else if(rdid >= qUpto) {
-			break;
-		}
+
+			} // for (auto & prstate : rstatev) 
 		if(metricsPerRead) {
 			MERGE_METRICS(metricsPt);
-			nametmp = rstate.rds(0).name;
-			metricsPt.reportInterval(
+			// TODO: Verify this actually works in multi-mode
+			for (uint32_t i=0; i<nstates; i++) {
+			  BTString nametmp = rstatev[i]->rds(0).name;
+			  metricsPt.reportInterval(
 				metricsOfb, metricsStderr, true, &nametmp);
-			metricsPt.reset();
+			  metricsPt.reset();
+			}
 		}
+
 	} // while(true)
 
 	// One last metrics merge
