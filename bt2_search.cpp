@@ -3537,6 +3537,8 @@ static void multiseedSearchWorker(void *vp) {
 			gOlapMatesOK,
 			gExpandToFrag);
 
+		const size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
+
 		rndArb.init((uint32_t)time(0));
 		while(!rstatev_all_done(rstatev)) {
 		  uint32_t nstates = rstatev.size();
@@ -3604,7 +3606,7 @@ static void multiseedSearchWorker(void *vp) {
 				if(sam_print_xt) {
 					gettimeofday(&rstate.prm.tv_beg, &rstate.prm.tz_beg);
 				}
-			}
+			} // for active_rstatev
 
 #ifdef PER_THREAD_TIMING
 				int cpu = 0, node = 0;
@@ -3666,13 +3668,17 @@ static void multiseedSearchWorker(void *vp) {
 							rstate.olm.ubases += rdlens[mate]; // bases passing filter
 						}
 					}
-					const size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 					// Whether we're done with mate1 / mate2
-
 					rstate.reset_matemap();
+			} // for active_rstatev
 
 						// Find end-to-end exact alignments for each read
-						if(doExactUpFront) {
+			if(doExactUpFront) {
+				for (auto & prstate : active_rstatev) {
+					ReadState &rstate = *prstate;
+					bool paired = rstate.rds_paired();
+					const size_t rdlens[2] = { rstate.rdlen(0), rstate.rdlen(1) };
+
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = rstate.matemap[matei];
 								if(!rstate.filt[mate] || rstate.done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
@@ -3848,10 +3854,16 @@ static void multiseedSearchWorker(void *vp) {
 									}
 								}
 							}
-						}
+				} // for active_rstatev
+			}
 
-						// 1-mismatch
-						if(do1mmUpFront && !seedSumm) {
+			// 1-mismatch
+			if(do1mmUpFront && !seedSumm) {
+				for (auto & prstate : active_rstatev) {
+					ReadState &rstate = *prstate;
+					bool paired = rstate.rds_paired();
+					const size_t rdlens[2] = { rstate.rdlen(0), rstate.rdlen(1) };
+
 							for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 								size_t mate = rstate.matemap[matei];
 								if(!rstate.filt[mate] || rstate.done[mate] || rstate.nelt[mate] > eePeEeltLimit) {
@@ -4029,13 +4041,22 @@ static void multiseedSearchWorker(void *vp) {
 									}
 								}
 							}
-						}
-						const int seedlens[2] = { multiseedLen, multiseedLen };
+				} // for active_rstatev
+			}
+			const int seedlens[2] = { multiseedLen, multiseedLen };
+			for (auto & prstate : active_rstatev) {
+				ReadState &rstate = *prstate;
+
 						rstate.nrounds[0] = min<size_t>(rstate.nrounds[0], rstate.interval[0]);
 						rstate.nrounds[1] = min<size_t>(rstate.nrounds[1], rstate.interval[1]);
 						rstate.gc = Constraint::penaltyFuncBased(scoreMin);
 						rstate.reset_seed_counts();
-						for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
+			} // for active_rstatev
+			for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
+				for (auto & prstate : active_rstatev) {
+					ReadState &rstate = *prstate;
+					bool paired = rstate.rds_paired();
+
 							rstate.ca.nextRead(); // Clear cache in preparation for new search
 							rstate.shs[0].clearSeeds();
 							rstate.shs[1].clearSeeds();
@@ -4286,7 +4307,11 @@ static void multiseedSearchWorker(void *vp) {
 									rstate.done[mate] = true;
 								}
 							}
-						} // end loop over reseeding rounds
+				} // for active_rstatev
+			} // end loop over reseeding rounds
+			for (auto & prstate : active_rstatev) {
+				ReadState &rstate = *prstate;
+
 						rstate.finalize_seeds_tried();
 						for(size_t i = 0; i < 2; i++) {
 							assert_leq(rstate.prm.nExIters, rstate.mxIter[i]);
@@ -4324,7 +4349,7 @@ static void multiseedSearchWorker(void *vp) {
 					scUnMapped,           // Consider soft-clipped bases unmapped when calculating TLEN
 					xeq);
 				assert(rstate.msinkwrap.empty());
-			} // for (auto & prstate : rstatev) 
+			} // for active_rstatev
 		for (auto & prstate : active_rstatev) {
 			ReadState &rstate = *prstate;
 			rstate.per_read_metrics();
