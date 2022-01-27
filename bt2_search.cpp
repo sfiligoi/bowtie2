@@ -3577,6 +3577,7 @@ static void multiseedSearchWorker(void *vp) {
 			}
 			i++;
 		    } // while
+		  }
 
 			// check if at least one is not done
 			alldone = true;
