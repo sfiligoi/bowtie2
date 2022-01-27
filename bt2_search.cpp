@@ -2966,6 +2966,8 @@ public:
 
 class ReadState {
 private:
+	const int tid;
+
 	// Thread-local cache for seed alignments
 	PtrWrap<AlignmentCache> scLocal;
 	// Thread-local cache for current seed alignments
@@ -2978,6 +2980,13 @@ private:
 
 	EList<Seed> seeds1, seeds2;
 
+	int mergei;
+	// Used by thread with threadid == 1 to measure time elapsed
+	time_t iTime;
+
+	uint64_t nbtfiltst; // TODO: find a new home for these
+	uint64_t nbtfiltsc; // TODO: find a new home for these
+	uint64_t nbtfiltdo; // TODO: find a new home for these
 public:
 	// Calculate the minimum valid score threshold for the read
 	TAlScore minsc[2];
@@ -3028,6 +3037,19 @@ public:
 	size_t seedHitTotMS[4];
 
 public:
+	SeedAligner al;
+	SwAligner sw, osw;
+	OuterLoopMetrics olm;
+	SeedSearchMetrics sdm;
+	WalkMetrics wlm;
+	SwMetrics swmSeed, swmMate;
+	ReportingMetrics rpm;
+	SSEMetrics sseU8ExtendMet;
+	SSEMetrics sseU8MateMet;
+	SSEMetrics sseI16ExtendMet;
+	SSEMetrics sseI16MateMet;
+	PerfMetrics metricsPt; // per-thread metrics object; for read-level metrics
+
 	unique_ptr<PatternSourcePerThread> ps;
 	// Interfaces for alignment and seed caches
 	AlignmentCacheIface ca;
@@ -3043,8 +3065,10 @@ public:
 	SeedResults shs[2];
 
 public:
-	ReadState(int tid, PatternSourcePerThreadFactory& patsrcFact) 
-	: scLocal()
+	ReadState(int _tid, PatternSourcePerThreadFactory& patsrcFact,
+		  ofstream *dpLog, ofstream *dpLogOpp)
+	: tid(_tid)
+	, scLocal()
 	, scCurrent(seedCacheCurrentMB * 1024 * 1024, false)
 	, rp(
                         (allHits ? std::numeric_limits<THitInt>::max() : khits), // -k
@@ -3055,6 +3079,11 @@ public:
                         gReportMixed)     // report unpaired alignments for paired reads?
 	, bmapq(new_mapq(mapqv, scoreMin, *multiseed_sc))
 	, seeds1(), seeds2()
+	, mergei(0)
+	, iTime(time(0))
+	, nbtfiltst(0)
+	, nbtfiltsc(0)
+	, nbtfiltdo(0)
 	, minsc{ std::numeric_limits<TAlScore>::max(), std::numeric_limits<TAlScore>::max() }
 	, filt{ true, true }
 	, nfilt{ true, true }
@@ -3084,6 +3113,20 @@ public:
 	, nUniqueSeedsMS{0, 0, 0, 0}
 	, nRepeatSeedsMS{0, 0, 0, 0}
 	, seedHitTotMS{0, 0, 0, 0}
+	, al()
+	, sw(dpLog)
+	, osw(dpLogOpp)
+	, olm()
+	, sdm()
+	, wlm()
+	, swmSeed()
+	, swmMate()
+	, rpm()
+	, sseU8ExtendMet()
+	, sseU8MateMet()
+	, sseI16ExtendMet()
+	, sseI16MateMet()
+	, metricsPt()
 	, ps(patsrcFact.create())
 	, ca( &scCurrent,
 	      init_and_get_scLocal(scLocal).get(),
@@ -3323,6 +3366,54 @@ public:
 		}
 	}
 
+	void merge_sw() {
+		MERGE_SW(sw);
+		MERGE_SW(osw);
+	}
+
+	void periodic_metrics(bool force_merge) {
+			const int mergeival = 16;
+			AlnSink&    msink      = *multiseed_msink;
+			OutFileBuf* metricsOfb = multiseed_metricsOfb;
+
+			if (force_merge) {
+				MERGE_METRICS(metrics);
+			} else {
+				if(metricsIval > 0 &&
+				   (metricsOfb != NULL || metricsStderr) &&
+				   !metricsPerRead &&
+				   ++mergei == mergeival)
+				{
+					// Do a periodic merge.  Update global metrics, in a
+					// synchronized manner if needed.
+					MERGE_METRICS(metrics);
+					mergei = 0;
+					// Check if a progress message should be printed
+					if(tid == 0) {
+						// Only thread 1 prints progress messages
+						time_t curTime = time(0);
+						if(curTime - iTime >= metricsIval) {
+							metrics.reportInterval(metricsOfb, metricsStderr, false, NULL);
+							iTime = curTime;
+						}
+					}
+				}
+			}
+	}
+
+	void per_read_metrics() {
+		if(metricsPerRead) {
+			AlnSink&    msink      = *multiseed_msink;
+			OutFileBuf* metricsOfb = multiseed_metricsOfb;
+
+			MERGE_METRICS(metricsPt);
+			BTString nametmp = rds(0).name;
+			metricsPt.reportInterval(
+				metricsOfb, metricsStderr, true, &nametmp);
+			metricsPt.reset();
+		}
+	}
+
 private:
 	static PtrWrap<AlignmentCache>& init_and_get_scLocal(PtrWrap<AlignmentCache> &scLocal) {
 		if(!msNoCache) {
@@ -3361,8 +3452,6 @@ static void multiseedSearchWorker(void *vp) {
 	const Ebwt*             ebwtBw   = multiseed_ebwtBw;
 	const Scoring&          sc       = *multiseed_sc;
 	const BitPairReference& ref      = *multiseed_refs;
-	AlnSink&                msink    = *multiseed_msink;
-	OutFileBuf*             metricsOfb = multiseed_metricsOfb;
 
 	{
 #ifdef PER_THREAD_TIMING
@@ -3387,8 +3476,6 @@ static void multiseedSearchWorker(void *vp) {
 		//const BitPairReference& refs   = *multiseed_refs;
 		unique_ptr<PatternSourcePerThreadFactory> patsrcFact(createPatsrcFactory(patsrc, pp, tid));
 
-		ReadState rstate(tid, *patsrcFact);
-
 		// Write dynamic-programming problem descriptions here
 		ofstream *dpLog = NULL, *dpLogOpp = NULL;
 		if(!logDps.empty()) {
@@ -3400,21 +3487,9 @@ static void multiseedSearchWorker(void *vp) {
 			dpLogOpp->sync_with_stdio(false);
 		}
 
-		SeedAligner al;
-		SwAligner sw(dpLog), osw(dpLogOpp);
-		OuterLoopMetrics olm;
-		SeedSearchMetrics sdm;
-		WalkMetrics wlm;
-		SwMetrics swmSeed, swmMate;
-		ReportingMetrics rpm;
 		RandomSource rndArb;
-		SSEMetrics sseU8ExtendMet;
-		SSEMetrics sseU8MateMet;
-		SSEMetrics sseI16ExtendMet;
-		SSEMetrics sseI16MateMet;
-		uint64_t nbtfiltst = 0; // TODO: find a new home for these
-		uint64_t nbtfiltsc = 0; // TODO: find a new home for these
-		uint64_t nbtfiltdo = 0; // TODO: find a new home for these
+
+		ReadState rstate(tid, *patsrcFact, dpLog, dpLogOpp);
 
 		ASSERT_ONLY(BTDnaString tmp);
 
@@ -3441,16 +3516,7 @@ static void multiseedSearchWorker(void *vp) {
 			gOlapMatesOK,
 			gExpandToFrag);
 
-		PerfMetrics metricsPt; // per-thread metrics object; for read-level metrics
-		BTString nametmp;
-
-		// Used by thread with threadid == 1 to measure time elapsed
-		time_t iTime = time(0);
-
-
 		rndArb.init((uint32_t)time(0));
-		int mergei = 0;
-		int mergeival = 16;
 		bool done = false;
 		while(!done) {
 			pair<bool, bool> ret = rstate.ps->nextReadPair();
@@ -3477,25 +3543,7 @@ static void multiseedSearchWorker(void *vp) {
 				//
 				// Check if there is metrics reporting for us to do.
 				//
-				if(metricsIval > 0 &&
-				   (metricsOfb != NULL || metricsStderr) &&
-				   !metricsPerRead &&
-				   ++mergei == mergeival)
-				{
-					// Do a periodic merge.  Update global metrics, in a
-					// synchronized manner if needed.
-					MERGE_METRICS(metrics);
-					mergei = 0;
-					// Check if a progress message should be printed
-					if(tid == 0) {
-						// Only thread 1 prints progress messages
-						time_t curTime = time(0);
-						if(curTime - iTime >= metricsIval) {
-							metrics.reportInterval(metricsOfb, metricsStderr, false, NULL);
-							iTime = curTime;
-						}
-					}
-				}
+				rstate.periodic_metrics(false);
 				rstate.prm.reset(); // per-read metrics
 				rstate.prm.doFmString = false;
 				if(sam_print_xt) {
@@ -3517,11 +3565,11 @@ static void multiseedSearchWorker(void *vp) {
 				while(retry) {
 					retry = false;
 					rstate.ca.nextRead(); // clear the cache
-					olm.reads++;
+					rstate.olm.reads++;
 					assert(!rstate.ca.aligning());
 					bool paired = rstate.rds_paired();
 					const size_t rdlens[2] = { rstate.rdlen(0), rstate.rdlen(1) };
-					olm.bases += (rdlens[0] + rdlens[1]);
+					rstate.olm.bases += (rdlens[0] + rdlens[1]);
 					rstate.msinkwrap.nextRead(
 						&rstate.rds(0),
 						paired ? &rstate.rds(1) : NULL,
@@ -3547,14 +3595,14 @@ static void multiseedSearchWorker(void *vp) {
 					for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 						if(!rstate.filt[mate]) {
 							// Mate was rejected by N filter
-							olm.freads++;               // reads filtered out
-							olm.fbases += rdlens[mate]; // bases filtered out
+							rstate.olm.freads++;               // reads filtered out
+							rstate.olm.fbases += rdlens[mate]; // bases filtered out
 						} else {
 							rstate.shs[mate].clear();
 							rstate.shs[mate].nextRead(rstate.rds(mate));
 							assert(rstate.shs[mate].empty());
-							olm.ureads++;               // reads passing filter
-							olm.ubases += rdlens[mate]; // bases passing filter
+							rstate.olm.ureads++;               // reads passing filter
+							rstate.olm.ubases += rdlens[mate]; // bases passing filter
 						}
 					}
 					const size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
@@ -3569,8 +3617,8 @@ static void multiseedSearchWorker(void *vp) {
 								if(!rstate.filt[mate] || rstate.done[mate] || rstate.msinkwrap.state().doneWithMate(mate == 0)) {
 									continue;
 								}
-								swmSeed.exatts++;
-								rstate.nelt[mate] = al.exactSweep(
+								rstate.swmSeed.exatts++;
+								rstate.nelt[mate] = rstate.al.exactSweep(
 									ebwtFw,        // index
 									rstate.rds(mate),    // read
 									sc,            // scoring scheme
@@ -3581,15 +3629,15 @@ static void multiseedSearchWorker(void *vp) {
 									rstate.minedrc[mate], // OUT: minimum # edits for rc mate
 									true,          // report 0mm hits
 									rstate.shs[mate],     // put end-to-end results here
-									sdm);          // metrics
+									rstate.sdm);          // metrics
 								size_t bestmin = min(rstate.minedfw[mate], rstate.minedrc[mate]);
 								if(bestmin == 0) {
-									sdm.bestmin0++;
+									rstate.sdm.bestmin0++;
 								} else if(bestmin == 1) {
-									sdm.bestmin1++;
+									rstate.sdm.bestmin1++;
 								} else {
 									assert_eq(2, bestmin);
-									sdm.bestmin2++;
+									rstate.sdm.bestmin2++;
 								}
 							}
 							rstate.matemap[0] = 0; rstate.matemap[1] = 1;
@@ -3625,8 +3673,8 @@ static void multiseedSearchWorker(void *vp) {
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
-										sw,             // dyn prog aligner, anchor
-										osw,            // dyn prog aligner, opposite
+										rstate.sw,             // dyn prog aligner, anchor
+										rstate.osw,            // dyn prog aligner, opposite
 										sc,             // scoring scheme
 										pepol,          // paired-end policy
 										-1,             // # mms allowed in a seed
@@ -3655,9 +3703,9 @@ static void multiseedSearchWorker(void *vp) {
 										tighten,        // -M score tightening mode
 										rstate.ca,             // seed alignment cache
 										rstate.rnd,            // pseudo-random source
-										wlm,            // group walk left metrics
-										swmSeed,        // DP metrics, seed extend
-										swmMate,        // DP metrics, mate finding
+										rstate.wlm,            // group walk left metrics
+										rstate.swmSeed,        // DP metrics, seed extend
+										rstate.swmMate,        // DP metrics, mate finding
 										rstate.prm,            // per-read metrics
 										&rstate.msinkwrap,     // for organizing hits
 										true,           // seek mate immediately
@@ -3675,7 +3723,7 @@ static void multiseedSearchWorker(void *vp) {
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
-										sw,             // dynamic prog aligner
+										rstate.sw,             // dynamic prog aligner
 										sc,             // scoring scheme
 										-1,             // # mms allowed in a seed
 										0,              // length of a seed
@@ -3697,16 +3745,15 @@ static void multiseedSearchWorker(void *vp) {
 										tighten,        // -M score tightening mode
 										rstate.ca,             // seed alignment cache
 										rstate.rnd,            // pseudo-random source
-										wlm,            // group walk left metrics
-										swmSeed,        // DP metrics, seed extend
+										rstate.wlm,            // group walk left metrics
+										rstate.swmSeed,        // DP metrics, seed extend
 										rstate.prm,            // per-read metrics
 										&rstate.msinkwrap,     // for organizing hits
 										true,           // report hits once found
 										rstate.exhaustive[mate]);
 								}
 								assert_gt(ret, 0);
-								MERGE_SW(sw);
-								MERGE_SW(osw);
+								rstate.merge_sw();
 								// Clear out the exact hits so that we don't try to
 								// extend them again later!
 								rstate.shs[mate].clearExactE2eHits();
@@ -3762,8 +3809,8 @@ static void multiseedSearchWorker(void *vp) {
 								bool yrc = rstate.minedrc[mate] <= 1 && !rstate.norc[mate];
 								if(yfw || yrc) {
 									// Clear out the exact hits
-									swmSeed.mm1atts++;
-									al.oneMmSearch(
+									rstate.swmSeed.mm1atts++;
+									rstate.al.oneMmSearch(
 										&ebwtFw,        // BWT index
 										ebwtBw,         // BWT' index
 										rstate.rds(mate),     // read
@@ -3775,7 +3822,7 @@ static void multiseedSearchWorker(void *vp) {
 										false,          // do exact match
 										true,           // do 1mm
 										rstate.shs[mate],      // seed hits (hits installed here)
-										sdm);           // metrics
+										rstate.sdm);           // metrics
 									rstate.nelt[mate] = rstate.shs[mate].num1mmE2eHits();
 								}
 							}
@@ -3807,8 +3854,8 @@ static void multiseedSearchWorker(void *vp) {
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
-										sw,             // dyn prog aligner, anchor
-										osw,            // dyn prog aligner, opposite
+										rstate.sw,             // dyn prog aligner, anchor
+										rstate.osw,            // dyn prog aligner, opposite
 										sc,             // scoring scheme
 										pepol,          // paired-end policy
 										-1,             // # mms allowed in a seed
@@ -3837,9 +3884,9 @@ static void multiseedSearchWorker(void *vp) {
 										tighten,        // -M score tightening mode
 										rstate.ca,             // seed alignment cache
 										rstate.rnd,            // pseudo-random source
-										wlm,            // group walk left metrics
-										swmSeed,        // DP metrics, seed extend
-										swmMate,        // DP metrics, mate finding
+										rstate.wlm,            // group walk left metrics
+										rstate.swmSeed,        // DP metrics, seed extend
+										rstate.swmMate,        // DP metrics, mate finding
 										rstate.prm,            // per-read metrics
 										&rstate.msinkwrap,     // for organizing hits
 										true,           // seek mate immediately
@@ -3857,7 +3904,7 @@ static void multiseedSearchWorker(void *vp) {
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
-										sw,             // dynamic prog aligner
+										rstate.sw,             // dynamic prog aligner
 										sc,             // scoring scheme
 										-1,             // # mms allowed in a seed
 										0,              // length of a seed
@@ -3879,16 +3926,15 @@ static void multiseedSearchWorker(void *vp) {
 										tighten,        // -M score tightening mode
 										rstate.ca,             // seed alignment cache
 										rstate.rnd,            // pseudo-random source
-										wlm,            // group walk left metrics
-										swmSeed,        // DP metrics, seed extend
+										rstate.wlm,            // group walk left metrics
+										rstate.swmSeed,        // DP metrics, seed extend
 										rstate.prm,            // per-read metrics
 										&rstate.msinkwrap,     // for organizing hits
 										true,           // report hits once found
 										rstate.exhaustive[mate]);
 								}
 								assert_gt(ret, 0);
-								MERGE_SW(sw);
-								MERGE_SW(osw);
+								rstate.merge_sw();
 								// Clear out the 1mm hits so that we don't try to
 								// extend them again later!
 								rstate.shs[mate].clear1mmE2eHits();
@@ -3963,7 +4009,7 @@ static void multiseedSearchWorker(void *vp) {
 								assert(rstate.msinkwrap.repOk());
 								//rstate.rnd.init(ROTL(rstate.rds(mate).seed, 10));
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
-								swmSeed.sdatts++;
+								rstate.swmSeed.sdatts++;
 								// Set up seeds
 								rstate.seedsw(mate).clear();
 								Seed::mmSeeds(
@@ -3978,7 +4024,7 @@ static void multiseedSearchWorker(void *vp) {
 								}
 								// Instantiate the seeds
 							std::pair<int, int> instFw, instRc;
-								std::pair<int, int> inst = al.instantiateSeeds(
+								std::pair<int, int> inst = rstate.al.instantiateSeeds(
 									rstate.seeds(mate),   // search seeds
 									offset,         // offset to begin extracting
 									rstate.interval[mate], // interval between seeds
@@ -3988,7 +4034,7 @@ static void multiseedSearchWorker(void *vp) {
 									rstate.norc[mate],     // don't align revcomp read
 									rstate.ca,             // holds some seed hits from previous reads
 									rstate.shs[mate],      // holds all the seed hits
-									sdm,            // metrics
+									rstate.sdm,            // metrics
 									instFw,  // OUT
 									instRc); // OUT
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
@@ -4000,7 +4046,7 @@ static void multiseedSearchWorker(void *vp) {
 								}
 								rstate.set_seeds_tried(mate, inst, instFw, instRc);
 								// Align seeds
-								al.searchAllSeeds(
+								rstate.al.searchAllSeeds(
 									rstate.seeds(mate),     // search seeds
 									&ebwtFw,          // BWT index
 									ebwtBw,           // BWT' index
@@ -4008,7 +4054,7 @@ static void multiseedSearchWorker(void *vp) {
 									sc,               // scoring scheme
 									rstate.ca,               // alignment cache
 									rstate.shs[mate],        // store seed hits here
-									sdm,              // metrics
+									rstate.sdm,              // metrics
 									rstate.prm);             // per-read metrics
 								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
 								if(rstate.shs[mate].empty()) {
@@ -4022,7 +4068,7 @@ static void multiseedSearchWorker(void *vp) {
 							  double uniqFactor[2] = { 0.0f, 0.0f };
 							  for(size_t i = 0; i < 2; i++) {
 								if(!rstate.shs[i].empty()) {
-									swmSeed.sdsucc++;
+									rstate.swmSeed.sdsucc++;
 									uniqFactor[i] = rstate.shs[i].uniquenessFactor();
 								}
 							  }
@@ -4064,8 +4110,8 @@ static void multiseedSearchWorker(void *vp) {
 											ebwtFw,         // bowtie index
 											ebwtBw,         // rev bowtie index
 											ref,            // packed reference strings
-											sw,             // dyn prog aligner, anchor
-											osw,            // dyn prog aligner, opposite
+											rstate.sw,             // dyn prog aligner, anchor
+											rstate.osw,            // dyn prog aligner, opposite
 											sc,             // scoring scheme
 											pepol,          // paired-end policy
 											multiseedMms,   // # mms allowed in a seed
@@ -4094,9 +4140,9 @@ static void multiseedSearchWorker(void *vp) {
 											tighten,        // -M score tightening mode
 											rstate.ca,             // seed alignment cache
 											rstate.rnd,            // pseudo-random source
-											wlm,            // group walk left metrics
-											swmSeed,        // DP metrics, seed extend
-											swmMate,        // DP metrics, mate finding
+											rstate.wlm,            // group walk left metrics
+											rstate.swmSeed,        // DP metrics, seed extend
+											rstate.swmMate,        // DP metrics, mate finding
 											rstate.prm,            // per-read metrics
 											&rstate.msinkwrap,     // for organizing hits
 											true,           // seek mate immediately
@@ -4114,7 +4160,7 @@ static void multiseedSearchWorker(void *vp) {
 											ebwtFw,         // bowtie index
 											ebwtBw,         // rev bowtie index
 											ref,            // packed reference strings
-											sw,             // dynamic prog aligner
+											rstate.sw,             // dynamic prog aligner
 											sc,             // scoring scheme
 											multiseedMms,   // # mms allowed in a seed
 											seedlens[mate], // length of a seed
@@ -4136,16 +4182,15 @@ static void multiseedSearchWorker(void *vp) {
 											tighten,        // -M score tightening mode
 											rstate.ca,             // seed alignment cache
 											rstate.rnd,            // pseudo-random source
-											wlm,            // group walk left metrics
-											swmSeed,        // DP metrics, seed extend
+											rstate.wlm,            // group walk left metrics
+											rstate.swmSeed,        // DP metrics, seed extend
 											rstate.prm,            // per-read metrics
 											&rstate.msinkwrap,     // for organizing hits
 											true,           // report hits once found
 											rstate.exhaustive[mate]);
 									}
 									assert_gt(ret, 0);
-									MERGE_SW(sw);
-									MERGE_SW(osw);
+									rstate.merge_sw();
 									if(ret == EXTEND_EXHAUSTED_CANDIDATES) {
 										// Not done yet
 									} else if(ret == EXTEND_POLICY_FULFILLED) {
@@ -4210,7 +4255,7 @@ static void multiseedSearchWorker(void *vp) {
 					rstate.qcfilt[0],
 					rstate.qcfilt[1],
 					rstate.rnd,                  // pseudo-random generator
-					rpm,                  // reporting metrics
+					rstate.rpm,                  // reporting metrics
 					rstate.prm,                  // per-read metrics
 					sc,                   // scoring scheme
 					!seedSumm,            // suppress seed summaries?
@@ -4223,17 +4268,11 @@ static void multiseedSearchWorker(void *vp) {
 		else if(rdid >= qUpto) {
 			break;
 		}
-		if(metricsPerRead) {
-			MERGE_METRICS(metricsPt);
-			nametmp = rstate.rds(0).name;
-			metricsPt.reportInterval(
-				metricsOfb, metricsStderr, true, &nametmp);
-			metricsPt.reset();
-		}
+		rstate.per_read_metrics();
 	} // while(true)
 
 	// One last metrics merge
-	MERGE_METRICS(metrics);
+	rstate.periodic_metrics(true);
 
 	if(dpLog    != NULL) dpLog->close();
 	if(dpLogOpp != NULL) dpLogOpp->close();
