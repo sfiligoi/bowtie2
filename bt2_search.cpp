@@ -2988,7 +2988,8 @@ private:
 	uint64_t nbtfiltsc; // TODO: find a new home for these
 	uint64_t nbtfiltdo; // TODO: find a new home for these
 public:
-	bool initialized;
+	// did ps->nextReadPair return True?
+	bool psdone;
 
 	// Calculate the minimum valid score threshold for the read
 	TAlScore minsc[2];
@@ -3086,7 +3087,7 @@ public:
 	, nbtfiltst(0)
 	, nbtfiltsc(0)
 	, nbtfiltdo(0)
-	, initialized(false)
+	, psdone(false)
 	, minsc{ std::numeric_limits<TAlScore>::max(), std::numeric_limits<TAlScore>::max() }
 	, filt{ true, true }
 	, nfilt{ true, true }
@@ -3527,21 +3528,28 @@ static void multiseedSearchWorker(void *vp) {
 			gExpandToFrag);
 
 		rndArb.init((uint32_t)time(0));
-		bool done = false;
-		while(!done) {
+		bool alldone = false;
+		while(!alldone) {
 		  uint32_t nstates = rstatev.size();
 		  {
 		    uint32_t i=0;
 		    // try to read nps values... if case of soft error, retry
-		    while((i<nstates) && (!done)) {
+		    while(i<nstates) {
 			ReadState &rstate = *(rstatev[i]);
-			rstate.initialized = true;
+			if(rstate.psdone) {
+				// nothing more to do for this one
+				i++;
+				continue;
+			}
 			pair<bool, bool> ret = rstate.ps->nextReadPair();
 			bool success = ret.first;
-			done = ret.second;
-			if(!success && done) {
-				break;
+			rstate.psdone = ret.second;
+			if(!success && rstate.psdone) {
+				// nothing more to do, move to the next one
+				i++;
+				continue;
 			} else if(!success) {
+				// soft error, retry
 				continue;
 			}
 			TReadId rdid = rstate.rds(0).rdid;
@@ -3557,28 +3565,30 @@ static void multiseedSearchWorker(void *vp) {
 			if(rdid >= skipReads && rdid < qUpto && sample) {
 				// valid, will do full processing
 			} else if(rdid >= qUpto) {
-				break;
+				// mark as done and move to the next one
+				rstate.psdone = true;
+				i++;
+				continue;
 			} else {
 				// only need to worry about metrics here, all others are below
 				rstate.per_read_metrics();
+				// retry this same read state
 				continue;
 			}
 			i++;
 		    } // while
-		    if (done && (i<nstates)) {
-			// one last periodic report for the ones we remove
-			for (uint32_t j=i; j<nstates; ++j) {
-			    ReadState &rstate = *(rstatev[j]);
-			    if (rstate.initialized) rstate.periodic_metrics(true);
+
+			// check if at least one is not done
+			alldone = true;
+			for (auto & prstate : rstatev) {
+				alldone &= prstate->psdone;
 			}
-			rstatev.resize(i);
-			nstates = rstatev.size();
-		    }
-		  } // i loop
-		  if (done && (nstates==0)) break;
+			if (alldone) break; // nothing more to do
 
 			for (auto & prstate : rstatev) {
 				ReadState &rstate = *prstate;
+				if(rstate.psdone) continue; // filter out done states
+
 				//
 				// Check if there is metrics reporting for us to do.
 				//
@@ -3603,14 +3613,16 @@ static void multiseedSearchWorker(void *vp) {
 				}
 #endif
 			for (auto & prstate : rstatev) {
+				ReadState &rstate = *prstate;
+				if(rstate.psdone) continue; // filter out done states
+
+				TReadId rdid = rstate.rds(0).rdid;
+
 				// Align this read/pair
 				bool retry = true;
 
 				// Try to align this read
 				while(retry) {
-					ReadState &rstate = *prstate;
-					TReadId rdid = rstate.rds(0).rdid;
-
 					retry = false;
 					rstate.ca.nextRead(); // clear the cache
 					rstate.olm.reads++;
@@ -4315,6 +4327,7 @@ static void multiseedSearchWorker(void *vp) {
 			} // for (auto & prstate : rstatev) 
 		for (auto & prstate : rstatev) {
 			ReadState &rstate = *prstate;
+			if(rstate.psdone) continue; // filter out done states
 			rstate.per_read_metrics();
 		}
 	} // while(true)
