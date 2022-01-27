@@ -2990,6 +2990,8 @@ private:
 public:
 	// did ps->nextReadPair return True?
 	bool psdone;
+	// did ps->nextReadPair return True and success was false
+	bool psdonefail;
 
 	// Calculate the minimum valid score threshold for the read
 	TAlScore minsc[2];
@@ -3088,6 +3090,7 @@ public:
 	, nbtfiltsc(0)
 	, nbtfiltdo(0)
 	, psdone(false)
+	, psdonefail(false)
 	, minsc{ std::numeric_limits<TAlScore>::max(), std::numeric_limits<TAlScore>::max() }
 	, filt{ true, true }
 	, nfilt{ true, true }
@@ -3428,6 +3431,16 @@ private:
 
 };
 
+template<typename T>
+inline bool rstatev_all_done(const T & rstatev) {
+	// check if at least one is not done
+	bool alldone = true;
+	for (auto & prstate : rstatev) {
+		alldone &= prstate->psdone;
+	}
+	return alldone;
+}
+
 /**
  * Called once per thread.  Sets up per-thread pointers to the shared global
  * data structures, creates per-thread structures, then enters the alignment
@@ -3528,8 +3541,7 @@ static void multiseedSearchWorker(void *vp) {
 			gExpandToFrag);
 
 		rndArb.init((uint32_t)time(0));
-		bool alldone = false;
-		while(!alldone) {
+		while(!rstatev_all_done(rstatev)) {
 		  uint32_t nstates = rstatev.size();
 		  {
 		    uint32_t i=0;
@@ -3537,7 +3549,9 @@ static void multiseedSearchWorker(void *vp) {
 		    while(i<nstates) {
 			ReadState &rstate = *(rstatev[i]);
 			if(rstate.psdone) {
-				// nothing more to do for this one
+				// nothing more to do for this state
+				// make sure we do not try to re-process it
+				rstate.psdonefail = true;
 				i++;
 				continue;
 			}
@@ -3545,7 +3559,8 @@ static void multiseedSearchWorker(void *vp) {
 			bool success = ret.first;
 			rstate.psdone = ret.second;
 			if(!success && rstate.psdone) {
-				// nothing more to do, move to the next one
+				// nothing more to do, move to the next state
+				rstate.psdonefail = true;
 				i++;
 				continue;
 			} else if(!success) {
@@ -3567,6 +3582,7 @@ static void multiseedSearchWorker(void *vp) {
 			} else if(rdid >= qUpto) {
 				// mark as done and move to the next one
 				rstate.psdone = true;
+				rstate.psdonefail = true;
 				i++;
 				continue;
 			} else {
@@ -3579,16 +3595,9 @@ static void multiseedSearchWorker(void *vp) {
 		    } // while
 		  }
 
-			// check if at least one is not done
-			alldone = true;
-			for (auto & prstate : rstatev) {
-				alldone &= prstate->psdone;
-			}
-			if (alldone) break; // nothing more to do
-
 			for (auto & prstate : rstatev) {
 				ReadState &rstate = *prstate;
-				if(rstate.psdone) continue; // filter out done states
+				if(rstate.psdonefail) continue; // filter out done states
 
 				//
 				// Check if there is metrics reporting for us to do.
@@ -3615,7 +3624,7 @@ static void multiseedSearchWorker(void *vp) {
 #endif
 			for (auto & prstate : rstatev) {
 				ReadState &rstate = *prstate;
-				if(rstate.psdone) continue; // filter out done states
+				if(rstate.psdonefail) continue; // filter out done states
 
 				TReadId rdid = rstate.rds(0).rdid;
 
@@ -4328,7 +4337,7 @@ static void multiseedSearchWorker(void *vp) {
 			} // for (auto & prstate : rstatev) 
 		for (auto & prstate : rstatev) {
 			ReadState &rstate = *prstate;
-			if(rstate.psdone) continue; // filter out done states
+			if(rstate.psdonefail) continue; // filter out done states
 			rstate.per_read_metrics();
 		}
 	} // while(true)
