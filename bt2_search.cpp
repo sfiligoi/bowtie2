@@ -3629,11 +3629,7 @@ static void multiseedSearchWorker(void *vp) {
 				TReadId rdid = rstate.rds(0).rdid;
 
 				// Align this read/pair
-				bool retry = true;
-
 				// Try to align this read
-				while(retry) {
-					retry = false;
 					rstate.ca.nextRead(); // clear the cache
 					rstate.olm.reads++;
 					assert(!rstate.ca.aligning());
@@ -4332,8 +4328,7 @@ static void multiseedSearchWorker(void *vp) {
 					seedSumm,             // suppress alignments?
 					scUnMapped,           // Consider soft-clipped bases unmapped when calculating TLEN
 					xeq);
-				assert(!retry || rstate.msinkwrap.empty());
-			} // while(retry)
+				assert(rstate.msinkwrap.empty());
 			} // for (auto & prstate : rstatev) 
 		for (auto & prstate : rstatev) {
 			ReadState &rstate = *prstate;
