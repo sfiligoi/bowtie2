@@ -3438,6 +3438,189 @@ inline bool rstatev_all_done(const T & rstatev) {
 	return alldone;
 }
 
+// Like a vector of ReadState, but with matemap embeeded in it
+class MultiMateReadMultiState {
+private:
+	vector< ReadState * >           prstatev;
+	// How many mate values we have for each rstate
+	vector< uint8_t >               matecv;
+	// Acttual mate map, exactly 2 per rstate
+	vector< uint8_t >               matemapv;
+
+public:
+	class MateIdxs {
+	public:
+		const uint8_t matei;
+		vector<size_t> idxs;
+
+		MateIdxs(uint8_t _matei) : matei(_matei) , idxs() {}
+	};
+
+public:
+	MultiMateReadMultiState() {}
+
+	void reserve(size_t size) {
+		prstatev.reserve(size);
+		matecv.reserve(size);
+		matemapv.reserve(2*size);
+	}
+
+	template<typename T>
+	void push_back(ReadState &rstate, const vector<T> &matemap) {
+		prstatev.push_back(&rstate);
+		size_t mc = matemap.size();
+		assert_gt(3, mc);
+		matecv.push_back(uint8_t(mc));
+		size_t i=0;
+		for(; i<mc; i++) {
+			T val = matemap[i];
+			assert_gt(256, val);
+			matemapv.push_back(uint8_t(val));
+		}
+		// always push exactly two elements
+		for(; i<2; i++) matemapv.push_back(uint8_t(0));
+	}
+
+	// set my done to true and remove any matemap from me on
+	void set_done_and_break(const MateIdxs &idxs, size_t i) {
+		const uint8_t matei = idxs.matei;
+		size_t idx = idxs.idxs[i];
+		uint8_t mate = matemapv[2*idx+matei];
+		prstatev[idx]->done[mate] = true;
+		matecv[i] = matei;
+	}
+
+	void set_seeds_tried(const MateIdxs &idxs, size_t i,
+			const std::pair<int, int> &inst,
+			const std::pair<int, int> &instFw,
+			const std::pair<int, int> &instRc) {
+		const uint8_t matei = idxs.matei;
+		size_t idx = idxs.idxs[i];
+		uint8_t mate = matemapv[2*idx+matei];
+		prstatev[idx]->set_seeds_tried(mate, inst, instFw, instRc);
+	}
+
+public:
+	MateIdxs get_idxs(uint8_t matei) const {
+		MateIdxs out(matei);
+		const size_t nrs = prstatev.size();
+		out.idxs.reserve(nrs);
+		for (size_t i=0; i<nrs; i++) {
+			uint8_t mc = matecv[i];
+			if (mc>matei) {
+				out.idxs.push_back(i);
+			}
+		}
+		return out;
+	}
+
+
+	vector<bool>   nofwv(    uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_nofw, matei);}
+	vector<bool>   norcv(    uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_norc, matei);}
+	vector<int>    nceilv(   uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_nceil, matei);}
+	vector<int>    intervalv(uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_interval, matei);}
+	vector<size_t> nroundsv( uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_nrounds, matei);}
+
+	vector< SeedAligner * >         palv( uint8_t matei) { return get_mate_vector(&MultiMateReadMultiState::get_pal, matei);}
+	vector< SeedSearchMetrics * >   psdmv(uint8_t matei) { return get_mate_vector(&MultiMateReadMultiState::get_psdm, matei);}
+	vector< AlignmentCacheIface * > pcav( uint8_t matei) { return get_mate_vector(&MultiMateReadMultiState::get_pca, matei);}
+
+	vector< const EList<Seed> * > pseedvs(uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_pseeds, matei);}
+	vector< const Read * >        prdsv(  uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_prds, matei);}
+	vector< SeedResults * >       pshsv(  uint8_t matei)       { return get_mate_vector(&MultiMateReadMultiState::get_pshs, matei);}
+	vector< PerReadMetrics * >    pprmv(  uint8_t matei)       { return get_mate_vector(&MultiMateReadMultiState::get_pprm, matei);}
+
+
+	vector<bool>   nofwv(    const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_nofw, idxs);}
+	vector<bool>   norcv(    const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_norc, idxs);}
+	vector<int>    nceilv(   const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_nceil, idxs);}
+	vector<int>    intervalv(const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_interval, idxs);}
+	vector<size_t> nroundsv( const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_nrounds, idxs);}
+
+	vector< SeedAligner * >         palv( const MateIdxs& idxs) { return get_idxs_vector(&MultiMateReadMultiState::get_pal, idxs);}
+	vector< SeedSearchMetrics * >   psdmv(const MateIdxs& idxs) { return get_idxs_vector(&MultiMateReadMultiState::get_psdm, idxs);}
+	vector< AlignmentCacheIface * > pcav( const MateIdxs& idxs) { return get_idxs_vector(&MultiMateReadMultiState::get_pca, idxs);}
+
+	vector< const EList<Seed> * > pseedsv(const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_pseeds, idxs);}
+	vector< const Read * >        prdsv(  const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_prds, idxs);}
+	vector< SeedResults * >       pshsv(  const MateIdxs& idxs)       { return get_idxs_vector(&MultiMateReadMultiState::get_pshs, idxs);}
+        vector< PerReadMetrics * >    pprmv(  const MateIdxs& idxs)       { return get_idxs_vector(&MultiMateReadMultiState::get_pprm, idxs);}
+
+private:
+	template<typename T>
+	vector< T > get_mate_vector(T (*valfunc)(ReadState *prstate, uint8_t mate), uint8_t matei) {
+		vector< T > out;
+		const size_t nrs = prstatev.size();
+		out.reserve(nrs);
+		for (size_t i=0; i<nrs; i++) {
+			uint8_t mc = matecv[i];
+			assert_gt(3, mc);
+			if (mc>matei) {
+				out.push_back( (*valfunc)(prstatev[i],matemapv[2*i+matei]) );
+			}
+		}
+		return out;
+	}
+
+	template<typename T>
+	vector< T > get_mate_vector(T (*valfunc)(const ReadState *prstate, uint8_t mate), uint8_t matei) const {
+		vector< T > out;
+		const size_t nrs = prstatev.size();
+		out.reserve(nrs);
+		for (size_t i=0; i<nrs; i++) {
+			uint8_t mc = matecv[i];
+			assert_gt(3, mc);
+			if (mc>matei) {
+				out.push_back( (*valfunc)(prstatev[i],matemapv[2*i+matei]) );
+			}
+		}
+		return out;
+	}
+
+	template<typename T>
+	vector< T > get_idxs_vector(T (*valfunc)(ReadState *prstate, uint8_t mate), const MateIdxs& idxs) {
+		vector< T > out;
+		const uint8_t matei = idxs.matei;
+		const size_t nrs = idxs.idxs.size();
+		out.reserve(nrs);
+		for (size_t i=0; i<nrs; i++) {
+			size_t idx = idxs.idxs[i];
+			out.push_back( (*valfunc)(prstatev[idx],matemapv[2*idx+matei]) );
+		}
+		return out;
+	}
+
+	template<typename T>
+	vector< T > get_idxs_vector(T (*valfunc)(const ReadState *prstate, uint8_t mate), const MateIdxs& idxs) const {
+		vector< T > out;
+		const uint8_t matei = idxs.matei;
+		const size_t nrs = idxs.idxs.size();
+		out.reserve(nrs);
+		for (size_t i=0; i<nrs; i++) {
+			size_t idx = idxs.idxs[i];
+			out.push_back( (*valfunc)(prstatev[idx],matemapv[2*idx+matei]) );
+		}
+		return out;
+	}
+
+
+	static SeedAligner* get_pal(ReadState *prstate, uint8_t mate) { return &(prstate->al); }
+	static SeedSearchMetrics* get_psdm(ReadState *prstate, uint8_t mate) { return &(prstate->sdm); }
+	static AlignmentCacheIface* get_pca(ReadState *prstate, uint8_t mate) { return &(prstate->ca); }
+	static PerReadMetrics* get_pprm(ReadState *prstate, uint8_t mate) { return &(prstate->prm); }
+
+	static const EList<Seed>* get_pseeds(const ReadState *prstate, uint8_t mate) { return &(prstate->seeds(mate));	}
+	static const Read * get_prds(const ReadState *prstate, uint8_t mate) { return &(prstate->rds(mate)); }
+
+	static bool get_nofw(const ReadState *prstate, uint8_t mate) { return prstate->nofw[mate]; }
+	static bool get_norc(const ReadState *prstate, uint8_t mate) { return prstate->norc[mate]; }
+	static int get_nceil(const ReadState *prstate, uint8_t mate) { return prstate->nceil[mate]; }
+	static int get_interval(const ReadState *prstate, uint8_t mate) { return prstate->interval[mate]; }
+	static size_t get_nrounds(const ReadState *prstate, uint8_t mate) { return prstate->nrounds[mate]; }
+
+	static SeedResults * get_pshs(ReadState *prstate, uint8_t mate) { return &(prstate->shs[mate]); }
+};
+
 /**
  * Called once per thread.  Sets up per-thread pointers to the shared global
  * data structures, creates per-thread structures, then enters the alignment
@@ -3542,7 +3725,7 @@ static void multiseedSearchWorker(void *vp) {
 		rndArb.init((uint32_t)time(0));
 		while(!rstatev_all_done(rstatev)) {
 		  uint32_t nstates = rstatev.size();
-		  vector< shared_ptr<ReadState> > active_rstatev;
+		  vector< shared_ptr<ReadState> > active_rstatev; //NOTE: Elements can be processed in any order
 		  active_rstatev.reserve(nstates);
 		  {
 		    uint32_t i=0;
@@ -4053,9 +4236,13 @@ static void multiseedSearchWorker(void *vp) {
 						rstate.reset_seed_counts();
 			} // for active_rstatev
 			for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
+				MultiMateReadMultiState mmstatev;
+				mmstatev.reserve(active_rstatev.size());
 				for (auto & prstate : active_rstatev) {
 					ReadState &rstate = *prstate;
 					bool paired = rstate.rds_paired();
+					vector< size_t > process_mates;
+					process_mates.reserve(2);
 
 							rstate.ca.nextRead(); // Clear cache in preparation for new search
 							rstate.shs[0].clearSeeds();
@@ -4104,47 +4291,96 @@ static void multiseedSearchWorker(void *vp) {
 								if(offset > 0 && rstate.seeds(mate)[0].len + offset > rstate.rds(mate).length()) {
 									continue;
 								}
+								process_mates.push_back(mate);
+							} // for matei
+					mmstatev.push_back(rstate, process_mates);
+				} // for active_rstatev
+				for (size_t matei = 0; matei<2; matei++) {
+					{
+						const MultiMateReadMultiState::MateIdxs idxs = mmstatev.get_idxs(matei);
+
+						const vector<int>    intervalv = mmstatev.intervalv(idxs);
+						const vector<size_t> nroundsv  = mmstatev.nroundsv(idxs);
+						const vector<bool>   nofwv     = mmstatev.nofwv(idxs);
+						const vector<bool>   norcv     = mmstatev.norcv(idxs);
+						auto  palv    = mmstatev.palv(idxs);
+						auto  pseedsv = mmstatev.pseedsv(idxs);
+						auto  prdsv   = mmstatev.prdsv(idxs);
+						auto  pcav    = mmstatev.pcav(idxs);
+						auto  pshsv   = mmstatev.pshsv(idxs);
+						auto  psdmv   = mmstatev.psdmv(idxs);
+
+						const size_t nels = palv.size();
+						vector< std::pair<int, int> > instv, instFwv, instRcv;
+						instv.resize(nels);
+						instFwv.resize(nels);
+						instRcv.resize(nels);
+						for (size_t i=0; i<nels; i++) {
 								// Instantiate the seeds
-							std::pair<int, int> instFw, instRc;
-								std::pair<int, int> inst = rstate.al.instantiateSeeds(
-									rstate.seeds(mate),   // search seeds
+								size_t offset = (intervalv[i] * roundi) / nroundsv[i];
+								instv[i] = palv[i]->instantiateSeeds(
+									*(pseedsv[i]),   // search seeds
 									offset,         // offset to begin extracting
-									rstate.interval[mate], // interval between seeds
-									rstate.rds(mate),     // read to align
+									intervalv[i], // interval between seeds
+									*(prdsv[i]),     // read to align
 									sc,             // scoring scheme
-									rstate.nofw[mate],     // don't align forward read
-									rstate.norc[mate],     // don't align revcomp read
-									rstate.ca,             // holds some seed hits from previous reads
-									rstate.shs[mate],      // holds all the seed hits
-									rstate.sdm,            // metrics
-									instFw,  // OUT
-									instRc); // OUT
-								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
-								if(inst.first + inst.second == 0) {
+									nofwv[i],     // don't align forward read
+									norcv[i],     // don't align revcomp read
+									*(pcav[i]),             // holds some seed hits from previous reads
+									*(pshsv[i]),      // holds all the seed hits
+									*(psdmv[i]),            // metrics
+									instFwv[i],  // OUT
+									instRcv[i]); // OUT
+						}
+						for (size_t i=0; i<nels; i++) {
+								assert(pshsv[i]->repOk(&pcav[i]->current()));
+								if(instv[i].first + instv[i].second == 0) {
 									// No seed hits!  Done with this mate.
-									assert(rstate.shs[mate].empty());
-									rstate.done[mate] = true;
-									break;
+									assert(pshsv[i]->empty());
+									mmstatev.set_done_and_break(idxs,i);
+								} else {
+									mmstatev.set_seeds_tried(idxs, i, instv[i], instFwv[i], instRcv[i]);
 								}
-								rstate.set_seeds_tried(mate, inst, instFw, instRc);
+						}
+					}
+					// the elements may have changed (see set_done_and_break), so need to re-create the vectors
+					{
+						const MultiMateReadMultiState::MateIdxs idxs = mmstatev.get_idxs(matei);
+
+						auto  palv    = mmstatev.palv(idxs);
+						auto  pseedsv = mmstatev.pseedsv(idxs);
+						auto  prdsv   = mmstatev.prdsv(idxs);
+						auto  pcav    = mmstatev.pcav(idxs);
+						auto  pshsv   = mmstatev.pshsv(idxs);
+						auto  psdmv   = mmstatev.psdmv(idxs);
+						auto  pprmv   = mmstatev.pprmv(idxs);
+
+						const size_t nels = palv.size();
+						for (size_t i=0; i<nels; i++) {
 								// Align seeds
-								rstate.al.searchAllSeeds(
-									rstate.seeds(mate),     // search seeds
+								palv[i]->searchAllSeeds(
+									*(pseedsv[i]),     // search seeds
 									&ebwtFw,          // BWT index
 									ebwtBw,           // BWT' index
-									rstate.rds(mate),       // read
+									*(prdsv[i]),       // read
 									sc,               // scoring scheme
-									rstate.ca,               // alignment cache
-									rstate.shs[mate],        // store seed hits here
-									rstate.sdm,              // metrics
-									rstate.prm);             // per-read metrics
-								assert(rstate.shs[mate].repOk(&rstate.ca.current()));
-								if(rstate.shs[mate].empty()) {
+									*(pcav[i]),               // alignment cache
+									*(pshsv[i]),        // store seed hits here
+									*(psdmv[i]),              // metrics
+									*(pprmv[i]));             // per-read metrics
+						}
+						for (size_t i=0; i<nels; i++) {
+								assert(pshsv[i]->repOk(&pcav[i]->current()));
+								if(pshsv[i]->empty()) {
 									// No seed alignments!  Done with this mate.
-									rstate.done[mate] = true;
-									break;
+									mmstatev.set_done_and_break(idxs,i);
 								}
-							}
+						}
+					}
+				} // for matei
+				for (auto & prstate : active_rstatev) {
+					ReadState &rstate = *prstate;
+					bool paired = rstate.rds_paired();
 							rstate.update_seed_counts();
 							{
 							  double uniqFactor[2] = { 0.0f, 0.0f };
