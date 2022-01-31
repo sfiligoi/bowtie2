@@ -494,6 +494,21 @@ static void finalizeOneAllSeeds(
 	met.bweds += bwedits;
 }
 
+void SeedAligner::setRead(
+	const Ebwt* ebwtFw,          // BWT index
+	const Ebwt* ebwtBw,          // BWT' index
+	const Read& read,            // read to align
+	const Scoring& pens,         // scoring scheme
+	AlignmentCacheIface& cache)  // local cache for seed alignments
+{
+	ebwtFw_ = ebwtFw;
+	ebwtBw_ = ebwtBw;
+	sc_ = &pens;
+	read_ = &read;
+	ca_ = &cache;
+	bwops_ = bwedits_ = 0;
+}
+
 /**
  * We assume that all seeds are the same length.
  *
@@ -517,12 +532,7 @@ void SeedAligner::searchAllSeeds(
 	assert(ebwtFw != NULL);
 	assert(ebwtFw->isInMemory());
 	assert(sr.repOk(&cache.current()));
-	ebwtFw_ = ebwtFw;
-	ebwtBw_ = ebwtBw;
-	sc_ = &pens;
-	read_ = &read;
-	ca_ = &cache;
-	bwops_ = bwedits_ = 0;
+	setRead(ebwtFw, ebwtBw, read, pens, cache);
 	uint64_t possearches = 0, seedsearches = 0, intrahits = 0, interhits = 0, ooms = 0;
 	// For each instantiated seed
 	for(int i = 0; i < (int)sr.numOffs(); i++) {

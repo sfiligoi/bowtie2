@@ -1563,6 +1563,13 @@ public:
 
 protected:
 
+	void setRead(
+		const Ebwt* ebwtFw,          // BWT index
+		const Ebwt* ebwtBw,          // BWT' index
+		const Read& read,            // read to align
+		const Scoring& pens,         // scoring scheme
+		AlignmentCacheIface& cache); // local seed alignment cache
+
 	/**
 	 * Report a seed hit found by searchSeedBi(), but first try to extend it out in
 	 * either direction as far as possible without hitting any edits.  This will
