@@ -460,6 +460,40 @@ pair<int, int> SeedAligner::instantiateSeeds(
 	return ret;
 }
 
+// Update metrics as part of searchAllSeeds
+static void finalizeOneAllSeeds(
+	const uint64_t bwops,	     // Burrows-Wheeler operations
+	const uint64_t bwedits,      // Burrows-Wheeler edits
+	const uint64_t possearches,
+	const uint64_t seedsearches,
+	const uint64_t intrahits,
+	const uint64_t interhits,
+	const uint64_t ooms,
+	const SeedResults& sr,       // holds all the seed hits
+	SeedSearchMetrics& met,      // metrics
+	PerReadMetrics& prm)         // per-read metrics
+{
+	prm.nSeedRanges = sr.numRanges();
+	prm.nSeedElts = sr.numElts();
+	prm.nSeedRangesFw = sr.numRangesFw();
+	prm.nSeedRangesRc = sr.numRangesRc();
+	prm.nSeedEltsFw = sr.numEltsFw();
+	prm.nSeedEltsRc = sr.numEltsRc();
+	prm.seedMedian = (uint64_t)(sr.medianHitsPerSeed() + 0.5);
+	prm.seedMean = (uint64_t)sr.averageHitsPerSeed();
+
+	prm.nSdFmops += bwops;
+	met.seedsearch += seedsearches;
+	met.nrange += sr.numRanges();
+	met.nelt += sr.numElts();
+	met.possearch += possearches;
+	met.intrahit += intrahits;
+	met.interhit += interhits;
+	met.ooms += ooms;
+	met.bwops += bwops;
+	met.bweds += bwedits;
+}
+
 /**
  * We assume that all seeds are the same length.
  *
@@ -555,25 +589,11 @@ void SeedAligner::searchAllSeeds(
 			}
 		}
 	}
-	prm.nSeedRanges = sr.numRanges();
-	prm.nSeedElts = sr.numElts();
-	prm.nSeedRangesFw = sr.numRangesFw();
-	prm.nSeedRangesRc = sr.numRangesRc();
-	prm.nSeedEltsFw = sr.numEltsFw();
-	prm.nSeedEltsRc = sr.numEltsRc();
-	prm.seedMedian = (uint64_t)(sr.medianHitsPerSeed() + 0.5);
-	prm.seedMean = (uint64_t)sr.averageHitsPerSeed();
-
-	prm.nSdFmops += bwops_;
-	met.seedsearch += seedsearches;
-	met.nrange += sr.numRanges();
-	met.nelt += sr.numElts();
-	met.possearch += possearches;
-	met.intrahit += intrahits;
-	met.interhit += interhits;
-	met.ooms += ooms;
-	met.bwops += bwops_;
-	met.bweds += bwedits_;
+	finalizeOneAllSeeds(
+			bwops_, bwedits_,
+			possearches, seedsearches, intrahits, interhits, ooms,
+			sr,
+			met, prm);
 }
 
 bool SeedAligner::sanityPartial(
