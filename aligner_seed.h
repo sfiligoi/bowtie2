@@ -1570,6 +1570,13 @@ protected:
 		const Scoring& pens,         // scoring scheme
 		AlignmentCacheIface& cache); // local seed alignment cache
 
+	// Returns the same value as cache.beginAlign
+	int setSeedResult(
+		SeedResults& sr,             // holds all the seed hits
+		QVal &qv,                    // range of ranges in cache
+		bool fw,                     // orientation of seed currently being searched
+		size_t i);
+
 	/**
 	 * Report a seed hit found by searchSeedBi(), but first try to extend it out in
 	 * either direction as far as possible without hitting any edits.  This will

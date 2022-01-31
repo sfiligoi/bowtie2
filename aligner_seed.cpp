@@ -509,6 +509,23 @@ void SeedAligner::setRead(
 	bwops_ = bwedits_ = 0;
 }
 
+int SeedAligner::setSeedResult(
+	SeedResults& sr,             // holds all the seed hits
+	QVal &qv,                    // range of ranges in cache
+	bool fw,                     // orientation of seed currently being searched
+	size_t i)
+{
+			seq_  = &sr.seqs(fw)[i];  // seed sequence
+			qual_ = &sr.quals(fw)[i]; // seed qualities
+			off_  = sr.idx2off(i);    // seed offset (from 5')
+			fw_   = fw;               // seed orientation
+			// Tell the cache that we've started aligning, so the cache can
+			// expect a series of on-the-fly updates
+			int ret = ca_->beginAlign(*seq_, *qual_, qv);
+			ASSERT_ONLY(hits_.clear());
+			return ret;
+}
+
 /**
  * We assume that all seeds are the same length.
  *
@@ -536,7 +553,6 @@ void SeedAligner::searchAllSeeds(
 	uint64_t possearches = 0, seedsearches = 0, intrahits = 0, interhits = 0, ooms = 0;
 	// For each instantiated seed
 	for(int i = 0; i < (int)sr.numOffs(); i++) {
-		size_t off = sr.idx2off(i);
 		for(int fwi = 0; fwi < 2; fwi++) {
 			bool fw = (fwi == 0);
 			assert(sr.repOk(&cache.current()));
@@ -546,14 +562,7 @@ void SeedAligner::searchAllSeeds(
 				continue;
 			}
 			QVal qv;
-			seq_  = &sr.seqs(fw)[i];  // seed sequence
-			qual_ = &sr.quals(fw)[i]; // seed qualities
-			off_  = off;              // seed offset (from 5')
-			fw_   = fw;               // seed orientation
-			// Tell the cache that we've started aligning, so the cache can
-			// expect a series of on-the-fly updates
-			int ret = cache.beginAlign(*seq_, *qual_, qv);
-			ASSERT_ONLY(hits_.clear());
+			int ret = setSeedResult(sr, qv, fw, i);
 			if(ret == -1) {
 				// Out of memory when we tried to add key to map
 				ooms++;
