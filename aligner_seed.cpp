@@ -1652,7 +1652,7 @@ SeedAligner::searchSeedBi(
 		assert(bwt.botf - bwt.topf > 1  || !bloc.valid());
 		assert(ebwtBw_ == NULL || bwt.botf-bwt.topf == bwt.botb-bwt.topb);
 		assert(tloc.valid());
-		sstate.setOff(s.steps[i], bwt, ebwtBw_, ebwtFw_);
+		sstate.setOff(s.steps[i], bwt, ebwtFw_, ebwtBw_);
 		__builtin_prefetch(&((*seq_)[sstate.off]));
 		__builtin_prefetch(&((*qual_)[sstate.off]));
 		if(bloc.valid()) {
