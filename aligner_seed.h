@@ -65,7 +65,7 @@ struct Constraint {
 	 * Return true iff penalities and constraints prevent us from
 	 * adding any edits.
 	 */
-	bool mustMatch() {
+	bool mustMatch() const {
 		assert(instantiated);
 		return (mms == 0 && edits == 0) ||
 		        penalty == 0 ||
@@ -75,7 +75,7 @@ struct Constraint {
 	/**
 	 * Return true iff a mismatch of the given quality is permitted.
 	 */
-	bool canMismatch(int q, const Scoring& cm) {
+	bool canMismatch(int q, const Scoring& cm) const {
 		assert(instantiated);
 		return (mms > 0 || edits > 0) &&
 		       penalty >= cm.mm(q);
@@ -84,7 +84,7 @@ struct Constraint {
 	/**
 	 * Return true iff a mismatch of the given quality is permitted.
 	 */
-	bool canN(int q, const Scoring& cm) {
+	bool canN(int q, const Scoring& cm) const {
 		assert(instantiated);
 		return (mms > 0 || edits > 0) &&
 		       penalty >= cm.n(q);
@@ -94,7 +94,7 @@ struct Constraint {
 	 * Return true iff a mismatch of *any* quality (even qual=1) is
 	 * permitted.
 	 */
-	bool canMismatch() {
+	bool canMismatch() const {
 		assert(instantiated);
 		return (mms > 0 || edits > 0) && penalty > 0;
 	}
@@ -103,7 +103,7 @@ struct Constraint {
 	 * Return true iff a mismatch of *any* quality (even qual=1) is
 	 * permitted.
 	 */
-	bool canN() {
+	bool canN() const {
 		assert(instantiated);
 		return (mms > 0 || edits > 0);
 	}
@@ -112,7 +112,7 @@ struct Constraint {
 	 * Return true iff a deletion of the given extension (0=open, 1=1st
 	 * extension, etc) is permitted.
 	 */
-	bool canDelete(int ex, const Scoring& cm) {
+	bool canDelete(int ex, const Scoring& cm) const {
 		assert(instantiated);
 		return (dels > 0 && edits > 0) &&
 		       penalty >= cm.del(ex);
@@ -121,7 +121,7 @@ struct Constraint {
 	/**
 	 * Return true iff a deletion of any extension is permitted.
 	 */
-	bool canDelete() {
+	bool canDelete() const {
 		assert(instantiated);
 		return (dels > 0 || edits > 0) &&
 		       penalty > 0;
@@ -131,7 +131,7 @@ struct Constraint {
 	 * Return true iff an insertion of the given extension (0=open,
 	 * 1=1st extension, etc) is permitted.
 	 */
-	bool canInsert(int ex, const Scoring& cm) {
+	bool canInsert(int ex, const Scoring& cm) const {
 		assert(instantiated);
 		return (ins > 0 || edits > 0) &&
 		       penalty >= cm.ins(ex);
@@ -140,7 +140,7 @@ struct Constraint {
 	/**
 	 * Return true iff an insertion of any extension is permitted.
 	 */
-	bool canInsert() {
+	bool canInsert() const {
 		assert(instantiated);
 		return (ins > 0 || edits > 0) &&
 		       penalty > 0;
@@ -149,7 +149,7 @@ struct Constraint {
 	/**
 	 * Return true iff a gap of any extension is permitted
 	 */
-	bool canGap() {
+	bool canGap() const {
 		assert(instantiated);
 		return ((ins > 0 || dels > 0) || edits > 0) && penalty > 0;
 	}
@@ -1603,7 +1603,13 @@ protected:
 		TIndexOffU botb,         // bot in BWT'
 		uint16_t len,          // length of hit
 		DoublyLinkedList<Edit> *prevEdit);  // previous edit
-	
+
+	bool reportHit(
+		const BwtTopBot &bwt,  // The 4 BWT idxs
+		uint16_t len,          // length of hit
+		DoublyLinkedList<Edit> *prevEdit)  // previous edit
+	{ return reportHit(bwt.topf, bwt.botf, bwt.topb, bwt.botb, len, prevEdit); }
+
 	/**
 	 * Given an instantiated seed (in s_ and other fields), search
 	 */
@@ -1615,10 +1621,7 @@ protected:
 	bool searchSeedBi(
 		int step,              // depth into steps_[] array
 		int depth,             // recursion depth
-		TIndexOffU topf,         // top in BWT
-		TIndexOffU botf,         // bot in BWT
-		TIndexOffU topb,         // top in BWT'
-		TIndexOffU botb,         // bot in BWT'
+		BwtTopBot bwt,         // The 4 BWT idxs
 		SideLocus tloc,        // locus for top (perhaps unititialized)
 		SideLocus bloc,        // locus for bot (perhaps unititialized)
 		Constraint c0,         // constraints to enforce in seed zone 0
@@ -1635,10 +1638,7 @@ protected:
 		const Constraint &c2, // constraints to enforce in seed zone 2
 		DoublyLinkedList<Edit> *prevEdit,  // previous edit
 		int &step,            // depth into steps_[] array
-		TIndexOffU &topf,     // top in BWT
-		TIndexOffU &botf,     // bot in BWT
-		TIndexOffU &topb,     // top in BWT'
-		TIndexOffU &botb,     // bot in BWT'
+		BwtTopBot &bwt,        // The 4 BWT idxs
 		SideLocus &tloc,      // locus for top (perhaps unititialized)
 		SideLocus &bloc,      // locus for bot (perhaps unititialized)
 		bool &oom);           // did we run out of memory?
@@ -1646,7 +1646,7 @@ protected:
 	/**
 	 * Get tloc and bloc ready for the next step.
 	 */
-	inline void nextLocsBi(
+	void nextLocsBi(
 		SideLocus& tloc,            // top locus
 		SideLocus& bloc,            // bot locus
 		TIndexOffU topf,              // top in BWT
@@ -1655,12 +1655,24 @@ protected:
 		TIndexOffU botb,              // bot in BWT'
 		int step);                  // step to get ready for
 	
-	inline void prefetchNextLocsBi(
+	void nextLocsBi(
+		SideLocus& tloc,            // top locus
+		SideLocus& bloc,            // bot locus
+		const BwtTopBot &bwt,       // The 4 BWT idxs
+		int step)                   // step to get ready for
+	{ nextLocsBi(tloc, bloc, bwt.topf, bwt.botf, bwt.topb, bwt.botb, step); }
+
+	void prefetchNextLocsBi(
 		TIndexOffU topf,              // top in BWT
 		TIndexOffU botf,              // bot in BWT
 		TIndexOffU topb,              // top in BWT'
 		TIndexOffU botb,              // bot in BWT'
 		int step);                  // step to get ready for
+
+	void prefetchNextLocsBi(
+		const BwtTopBot &bwt,       // The 4 BWT idxs
+		int step)                   // step to get ready for
+	{ prefetchNextLocsBi(bwt.topf, bwt.botf, bwt.topb, bwt.botb, step); }
 
 	// Following are set in searchAllSeeds then used by searchSeed()
 	// and other protected members.
