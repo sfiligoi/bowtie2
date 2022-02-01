@@ -1444,31 +1444,22 @@ SeedAligner::reportHit(
 	return true;
 }
 
-/**
- * Given a seed, search.  Assumes zone 0 = no backtracking.
- *
- * Return a list of Seed hits.
- * 1. Edits
- * 2. Bidirectional BWT range(s) on either end
- */
+// return true, if we are already done
 bool
-SeedAligner::searchSeedBi(
-	int step,             // depth into steps_[] array
+SeedAligner::startSearchSeedBi(
 	int depth,            // recursion depth
-	TIndexOffU topf,        // top in BWT
-	TIndexOffU botf,        // bot in BWT
-	TIndexOffU topb,        // top in BWT'
-	TIndexOffU botb,        // bot in BWT'
-	SideLocus tloc,       // locus for top (perhaps unititialized)
-	SideLocus bloc,       // locus for bot (perhaps unititialized)
-	Constraint c0,        // constraints to enforce in seed zone 0
-	Constraint c1,        // constraints to enforce in seed zone 1
-	Constraint c2,        // constraints to enforce in seed zone 2
-	Constraint overall,   // overall constraints to enforce
-	DoublyLinkedList<Edit> *prevEdit  // previous edit
-#if 0
-	, const SABWOffTrack* prevOt // prev off tracker (if tracking started)
-#endif
+	const Constraint &c0, // constraints to enforce in seed zone 0
+	const Constraint &c1, // constraints to enforce in seed zone 1
+	const Constraint &c2, // constraints to enforce in seed zone 2
+	DoublyLinkedList<Edit> *prevEdit,  // previous edit
+	int &step,            // depth into steps_[] array
+	TIndexOffU &topf,     // top in BWT
+	TIndexOffU &botf,     // bot in BWT
+	TIndexOffU &topb,     // top in BWT'
+	TIndexOffU &botb,     // bot in BWT'
+	SideLocus &tloc,      // locus for top (perhaps unititialized)
+	SideLocus &bloc,      // locus for bot (perhaps unititialized)
+	bool &oom             // did we run out of memory?
 	)
 {
 	assert(s_ != NULL);
@@ -1480,13 +1471,14 @@ SeedAligner::searchSeedBi(
 		assert(ebwtBw_ == NULL || ebwtBw_->fchr()[i] == ebwtFw_->fchr()[i]);
 	}
 #endif
+	oom = false;
 	if(step == (int)s.steps.size()) {
 		// Finished aligning seed
 		assert(c0.acceptable());
 		assert(c1.acceptable());
 		assert(c2.acceptable());
 		if(!reportHit(topf, botf, topb, botb, seq_->length(), prevEdit)) {
-			return false; // Memory exhausted
+			oom = true; // Memory exhausted
 		}
 		return true;
 	}
@@ -1496,14 +1488,12 @@ SeedAligner::searchSeedBi(
 		assert(botf - topf > 1  || !bloc.valid());
 	}
 #endif
-	int off;
-	TIndexOffU tp[4], bp[4]; // dest BW ranges for "prime" index
 	if(step == 0) {
 		// Just starting
 		assert(prevEdit == NULL);
 		assert(!tloc.valid());
 		assert(!bloc.valid());
-		off = s.steps[0];
+		int off = s.steps[0];
 		bool ltr = off > 0;
 		off = abs(off)-1;
 		// Check whether/how far we can jump using ftab or fchr
@@ -1549,7 +1539,7 @@ SeedAligner::searchSeedBi(
 			assert(c1.acceptable());
 			assert(c2.acceptable());
 			if(!reportHit(topf, botf, topb, botb, seq_->length(), prevEdit)) {
-				return false; // Memory exhausted
+				oom = true; // Memory exhausted
 			}
 			return true;
 		}
@@ -1560,16 +1550,59 @@ SeedAligner::searchSeedBi(
 	assert(botf - topf == 1 ||  bloc.valid());
 	assert(botf - topf > 1  || !bloc.valid());
 	assert_geq(step, 0);
+
+	return false;
+}
+
+/**
+ * Given a seed, search.  Assumes zone 0 = no backtracking.
+ *
+ * Return a list of Seed hits.
+ * 1. Edits
+ * 2. Bidirectional BWT range(s) on either end
+ */
+bool
+SeedAligner::searchSeedBi(
+	int step,             // depth into steps_[] array
+	int depth,            // recursion depth
+	TIndexOffU topf,        // top in BWT
+	TIndexOffU botf,        // bot in BWT
+	TIndexOffU topb,        // top in BWT'
+	TIndexOffU botb,        // bot in BWT'
+	SideLocus tloc,       // locus for top (perhaps unititialized)
+	SideLocus bloc,       // locus for bot (perhaps unititialized)
+	Constraint c0,        // constraints to enforce in seed zone 0
+	Constraint c1,        // constraints to enforce in seed zone 1
+	Constraint c2,        // constraints to enforce in seed zone 2
+	Constraint overall,   // overall constraints to enforce
+	DoublyLinkedList<Edit> *prevEdit  // previous edit
+#if 0
+	, const SABWOffTrack* prevOt // prev off tracker (if tracking started)
+#endif
+	)
+{
+	bool oom = false;
+	bool done = startSearchSeedBi(
+			depth, c0, c1, c2, prevEdit,
+			step,
+			topf, botf, topb, botb,
+			tloc, bloc,
+			oom);
+	if(done) {
+		return !oom;
+	}
+	TIndexOffU tp[4], bp[4]; // dest BW ranges for "prime" index
 	TIndexOffU t[4], b[4]; // dest BW ranges
 	Constraint* zones[3] = { &c0, &c1, &c2 };
 	ASSERT_ONLY(TIndexOffU lasttot = botf - topf);
+	const InstantiatedSeed& s = *s_;
 	for(int i = step; i < (int)s.steps.size(); i++) {
 		assert_gt(botf, topf);
 		assert(botf - topf == 1 ||  bloc.valid());
 		assert(botf - topf > 1  || !bloc.valid());
 		assert(ebwtBw_ == NULL || botf-topf == botb-topb);
 		assert(tloc.valid());
-		off = s.steps[i];
+		int off = s.steps[i];
 		bool ltr = off > 0;
 		const Ebwt* ebwt = ltr ? ebwtBw_ : ebwtFw_;
 		assert(ebwt != NULL);
