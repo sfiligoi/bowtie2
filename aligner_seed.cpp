@@ -1131,19 +1131,6 @@ bool SeedAligner::oneMmSearch(
 	return results;
 }
 
-/**
- * Wrapper for initial invcation of searchSeed.
- */
-bool
-SeedAligner::searchSeedBi() {
-	return searchSeedBi(
-		0, 0,
-		BwtTopBot(),
-		SideLocus(), SideLocus(),
-		s_->cons[0], s_->cons[1], s_->cons[2], s_->overall,
-		NULL);
-}
-
 inline void
 SeedAligner::prefetchNextLocsBi(
         TIndexOffU topf,              // top in BWT
@@ -1795,6 +1782,19 @@ SeedAligner::searchSeedBi(
 		nextLocsBi(tloc, bloc, bwt, i+1);
 	}
 	return true;
+}
+
+/**
+ * Wrapper for initial invcation of searchSeed.
+ */
+bool
+SeedAligner::searchSeedBi() {
+	return searchSeedBi(
+		0, 0,
+		BwtTopBot(),
+		SideLocus(), SideLocus(),
+		s_->cons[0], s_->cons[1], s_->cons[2], s_->overall,
+		NULL);
 }
 
 #ifdef ALIGNER_SEED_MAIN

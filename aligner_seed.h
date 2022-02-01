@@ -23,6 +23,8 @@
 #include <iostream>
 #include <utility>
 #include <limits>
+#include <vector>
+#include <array>
 #include "qual.h"
 #include "ds.h"
 #include "sstring.h"
@@ -286,6 +288,19 @@ struct Constraint {
 	 * penalty constraint.
 	 */
 	static Constraint editBased(int edits);
+};
+
+template< std::size_t N>
+class Constraints {
+public:
+	// default constructor is OK
+
+	bool acceptable() const {
+		bool acct = true;
+		for(auto c : cv) acct &= *c;
+	}
+
+	std::array<Constraint,N> cv;
 };
 
 /**
