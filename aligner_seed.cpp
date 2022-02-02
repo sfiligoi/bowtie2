@@ -615,6 +615,166 @@ void SeedAligner::searchAllSeeds(
 			met, prm);
 }
 
+// MultiSeedAligner equivalent of SeedAligner::searchAllSeeds
+void MultiSeedAligner::searchAllSeeds(
+	std::vector< SeedAligner* > &palv,             // seed aligners
+	const std::vector< EList<Seed>* > &pseedsv,    // search seeds
+	const Ebwt* ebwtFw,                            // BWT index
+	const Ebwt* ebwtBw,                            // BWT' index
+	const std::vector< Read* > &preadv,            // read to align
+	const Scoring& pens,                           // scoring scheme
+	std::vector< AlignmentCacheIface* > &pcachev,  // local cache for seed alignments
+	std::vector< SeedResults* > &psrv,             // holds all the seed hits
+	std::vector< SeedSearchMetrics* > &pmetv,      // metrics
+	std::vector< PerReadMetrics* > &pprmv)         // per-read metrics
+{
+	assert_eq(palv.size(), pseedsv.size())
+	assert_eq(pseedsv.size(), preadv.size());
+	assert_eq(preadv.size(), pcachev.size());
+	assert_eq(pcachev.size(), psrv.size());
+	assert_eq(psrv.size(), pmetv.size());
+	assert_eq(pmetv.size(), pprmv.size());
+	assert(ebwtFw != NULL);
+	assert(ebwtFw->isInMemory());
+	const size_t nels = palv.size();
+
+	size_t max_numOffs = 0;
+	for (size_t n=0; n<nels; n++) {
+		assert(!pseedsv[n]->empty());
+		assert(psrv[n]->repOk(&pcachev[n]->current()));
+		palv[n]->setRead(ebwtFw, ebwtBw, *(preadv[n]), pens, *(pcachev[n]));
+		size_t numOffs = psrv[n]->numOffs();
+		if(numOffs>max_numOffs) max_numOffs=numOffs;
+	}
+	std::vector<uint64_t> possearches(nels,0);
+	std::vector<uint64_t> seedsearches(nels,0);
+	std::vector<uint64_t> intrahits(nels,0);
+	std::vector<uint64_t> interhits(nels,0);
+	std::vector<uint64_t> ooms(nels,0);
+
+	// QVal is small, better to just pre-allocate max number
+	std::vector< QVal > qvv(nels);
+
+	// For each instantiated seed
+	for(size_t i = 0; i < max_numOffs; i++) {
+		std::vector< size_t > iter_idxs;
+		iter_idxs.reserve(nels);
+		for(size_t n=0; n<nels; n++) {
+			if(i<psrv[n]->numOffs()) {
+				iter_idxs.push_back(n);
+			}
+		}
+		const size_t iter_nels = iter_idxs.size();
+		for(int fwi = 0; fwi < 2; fwi++) {
+			std::vector< size_t > r0_idxs;
+			r0_idxs.reserve(iter_nels);
+
+			const bool fw = (fwi == 0);
+			size_t max_iss_size = 0;
+			for(size_t ni=0; ni<iter_nels; ni++) {
+				size_t n = iter_idxs[ni];
+				assert(psrv[n]->repOk(&pcache[n]->current()));
+				EList<InstantiatedSeed>& iss = psrv[n]->instantiatedSeeds(fw, i);
+				if(iss.empty()) {
+					// Cache hit in an across-read cache
+					continue;
+				}
+				qvv[n].reset();
+				int ret = palv[n]->setSeedResult(*(psrv[n]), qvv[n], fw, i);
+				if(ret == -1) {
+					// Out of memory when we tried to add key to map
+					ooms[n]++;
+					continue;
+				}
+				if(ret == 0) {
+					// Not already in cache
+					assert(pcachev[n]->aligning());
+					possearches[n]++;
+					r0_idxs.push_back(n);
+					if (iss.size()>max_iss_size) max_iss_size=iss.size();
+				} else {
+					// Already in cache
+					assert_eq(1, ret);
+					assert(qvv[n].valid());
+					intrahits[n]++;
+					assert(!pcachev[n]->aligning());
+					psrv[n]->add(
+						qvv[n],    // range of ranges in cache
+						pcachev[n]->current(), // cache
+						i,     // seed index (from 5' end)
+						fw);   // whether seed is from forward read
+				}
+			}
+
+			const size_t r0_nels = r0_idxs.size();
+			bool abort = false;
+			for(size_t j = 0; j < max_iss_size; j++) {
+				std::vector< size_t > j_idxs;
+				j_idxs.reserve(r0_nels);
+				for(size_t ni=0; ni<r0_nels; ni++) {
+					size_t n = r0_idxs[ni];
+					EList<InstantiatedSeed>& iss = psrv[n]->instantiatedSeeds(fw, i);
+
+					if(j>=iss.size()) continue;
+
+					// Set seq_ and qual_ appropriately, using the seed sequences
+					// and qualities already installed in SeedResults
+					assert_eq(fw, iss[j].fw);
+					assert_eq(i, (int)iss[j].seedoffidx);
+					palv[n]->s_ = &iss[j];
+					j_idxs.push_back(n);
+				}
+				const size_t j_nels = j_idxs.size();
+				std::vector< SeedAligner* > j_palv;
+				j_palv.reserve(j_nels);
+				for(size_t ni=0; ni<j_nels; ni++) {
+					size_t n = j_idxs[ni];
+					j_palv.push_back(palv[n]);
+				}
+
+				// Do the search with respect to seq_, qual_ and s_.
+				if(!searchSeedBi(j_palv)) {
+					// Memory exhausted during search
+					for(size_t ni=0; ni<j_nels; ni++) {
+						size_t n = j_idxs[ni];
+						ooms[n]++;
+					}
+					abort = true;
+					break;
+				}
+				for(size_t ni=0; ni<j_nels; ni++) {
+					size_t n = j_idxs[ni];
+					seedsearches[n]++;
+					assert(pcachev[n].aligning());
+				}
+			}
+			for(size_t ni=0; ni<r0_nels; ni++) {
+				size_t n = r0_idxs[ni];
+
+				if(!abort) {
+					qvv[n] = pcachev[n]->finishAlign();
+				}
+				assert(abort || !pcachev[n]->aligning());
+				if(qvv[n].valid()) {
+					psrv[n]->add(
+						qvv[n],    // range of ranges in cache
+						pcachev[n]->current(), // cache
+						i,     // seed index (from 5' end)
+						fw);   // whether seed is from forward read
+				}
+			}
+		} // for fwi
+	} // for i
+	for (size_t n=0; n<nels; n++) {
+		finalizeOneAllSeeds(
+			palv[n]->bwops_, palv[n]->bwedits_,
+			possearches[n], seedsearches[n], intrahits[n], interhits[n], ooms[n],
+			*(psrv[n]),
+			*(pmetv[n]), *(pprmv[n]));
+	}
+}
+
+
 bool SeedAligner::sanityPartial(
 	const Ebwt*        ebwtFw, // BWT index
 	const Ebwt*        ebwtBw, // BWT' index
@@ -1493,6 +1653,9 @@ public:
 	, prevEdit(_prevEdit)
 	{}
 
+	// virtual destructor needed for proper polimorphism
+	virtual ~SeedAlignerSearchParams() {}
+
 	void checkCV() const {
 			assert(cv[0].acceptable());
 			assert(cv[1].acceptable());
@@ -1825,7 +1988,7 @@ SeedAligner::searchSeedBi(
 						// non-redundant with other seeds
 					}
 
-					// as olds gets out of scope,
+					// as save gets out of scope,
 					// restores cons, p.overall, p.tloc, p.bloc
 				}
 				if(cons.canGap() && p.overall.canGap()) {
@@ -1877,7 +2040,305 @@ SeedAligner::searchSeedBi(
 			return true;
 		}
 		nextLocsBi(p.tloc, p.bloc, p.bwt, i+1);
+	} // for i
+	return true;
+}
+
+class MultiSeedAlignerSearchParams : public SeedAlignerSearchParams {
+public:
+	SeedAligner& al;
+
+
+	MultiSeedAlignerSearchParams(
+		SeedAligner& _al,             // SeedAligner object associated with params
+		const int _step,              // depth into steps_[] array
+		const BwtTopBot &_bwt,        // The 4 BWT idxs
+		const SideLocus &_tloc,       // locus for top (perhaps unititialized)
+		const SideLocus &_bloc,       // locus for bot (perhaps unititialized)
+		const std::array<Constraint,3> _cv,        // constraints to enforce in seed zones
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: SeedAlignerSearchParams(_step, _bwt, _tloc, _bloc, _cv, _overall, _prevEdit)
+	, al(_al)
+	{}
+
+	MultiSeedAlignerSearchParams(
+		SeedAligner& _al,             // SeedAligner object associated with params
+		const int _step,              // depth into steps_[] array
+		const BwtTopBot &_bwt,        // The 4 BWT idxs
+		const SideLocus &_tloc,       // locus for top (perhaps unititialized)
+		const SideLocus &_bloc,       // locus for bot (perhaps unititialized)
+		const Constraint &_c0,        // constraints to enforce in seed zone 0
+		const Constraint &_c1,        // constraints to enforce in seed zone 1
+		const Constraint &_c2,        // constraints to enforce in seed zone 2
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: SeedAlignerSearchParams(_step, _bwt, _tloc, _bloc, _c0, _c1, _c2, _overall, _prevEdit)
+	, al(_al)
+	{}
+
+	// create an empty bwt, tloc and bloc
+	MultiSeedAlignerSearchParams(
+		SeedAligner& _al,             // SeedAligner object associated with params
+		const Constraint &_c0,        // constraints to enforce in seed zone 0
+		const Constraint &_c1,        // constraints to enforce in seed zone 1
+		const Constraint &_c2,        // constraints to enforce in seed zone 2
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: SeedAlignerSearchParams(_c0, _c1, _c2, _overall, _prevEdit)
+	, al(_al)
+	{}
+};
+
+bool
+MultiSeedAligner::searchSeedBi(
+	int depth,            // recursion depth
+	std::vector< MultiSeedAlignerSearchParams* > &ppv)
+{
+	const size_t nels = ppv.size();
+
+	bool done = true;
+
+	for(auto ppel : ppv) {
+		bool my_oom = false;
+		bool my_done = ppel->al.startSearchSeedBi(
+				depth,
+				*ppel,
+				my_oom);
+		if(my_done) {
+			if (my_oom) {
+				return false;
+			}
+			// only >=0 steps are valid, so make it invalid
+			ppel->step = -1;
+		}
+		done &= my_done;
 	}
+	if(done) {
+		return true;
+	}
+
+	std::vector<SeedAlignerSearchState> sstatev(nels);
+	size_t min_step=INT_MAX;
+	size_t max_step=0;
+
+	for (size_t n=0; n<nels; n++) {
+		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		if (p.step<0) continue; // invalid => done
+		if((size_t)p.step<min_step) min_step=p.step;
+
+		const size_t ssteps = p.al.s_->steps.size();
+		if(ssteps>max_step) max_step=ssteps;
+
+		sstatev[n].initLastTot(p.bwt.botf - p.bwt.topf);
+	}
+	for(size_t i = min_step; i < max_step; i++) {
+	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
+		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		const InstantiatedSeed& s = *p.al.s_;
+		if((p.step<(int)i)||(i>=s.steps.size())) continue;
+		SeedAlignerSearchState& sstate = sstatev[n];
+
+		assert_gt(p.bwt.botf, p.bwt.topf);
+		assert(p.bwt.botf - p.bwt.topf == 1 ||  p.bloc.valid());
+		assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
+		assert(p.al.ebwtBw_ == NULL || p.bwt.botf-p.bwt.topf == p.bwt.botb-p.bwt.topb);
+		assert(p.tloc.valid());
+		sstate.setOff(p.al.s_->steps[i], p.bwt, p.al.ebwtFw_, p.al.ebwtBw_);
+		__builtin_prefetch(&((*p.al.seq_)[sstate.off]));
+		__builtin_prefetch(&((*p.al.qual_)[sstate.off]));
+	   }
+
+	   std::vector<bool> bailv(nels,true);
+	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
+		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		const InstantiatedSeed& s = *p.al.s_;
+		if((p.step<(int)i)||(i>=s.steps.size())) continue;
+		SeedAlignerSearchState& sstate = sstatev[n];
+
+		if(p.bloc.valid()) {
+			// Range delimited by tloc/bloc has size >1.  If size == 1,
+			// we use a simpler query (see if(!bloc.valid()) blocks below)
+			p.al.bwops_++;
+			sstate.ebwt->mapBiLFEx(p.tloc, p.bloc, sstate.t, sstate.b, sstate.tp, sstate.bp);
+			ASSERT_ONLY(TIndexOffU tot = (sstate.b[0]-sstate.t[0])+(sstate.b[1]-sstate.t[1])+(sstate.b[2]-sstate.t[2])+(sstate.b[3]-sstate.t[3]));
+			ASSERT_ONLY(TIndexOffU totp = (sstate.bp[0]-sstate.tp[0])+(sstate.bp[1]-sstate.tp[1])+(sstate.bp[2]-sstate.tp[2])+(sstate.bp[3]-sstate.tp[3]));
+			assert_eq(tot, totp);
+#ifndef NDEBUG
+			sstate.assertLeqAndSetLastTot(tot);
+#endif
+		}
+
+		int c = (*p.al.seq_)[sstate.off];  assert_range(0, 4, c);
+
+		Constraint& cons    = p.cv[abs(s.zones[i].first)];
+		//Constraint& insCons = p.cv[abs(s.zones[i].second)];
+		// Is it legal for us to advance on characters other than 'c'?
+		if(!(cons.mustMatch() && !p.overall.mustMatch()) || c == 4) {
+			// There may be legal edits
+			bailv[n] = false;
+			if(!p.bloc.valid()) {
+				// Range delimited by tloc/bloc has size 1
+				p.al.bwops_++;
+				int cc = sstate.ebwt->mapLF1(sstate.ntop, p.tloc);
+				assert_range(-1, 3, cc);
+				if(cc < 0) bailv[n] = true;
+				else { sstate.t[cc] = sstate.ntop; sstate.b[cc] = sstate.ntop+1; }
+			}
+		}
+	     }
+	   {
+	     std::vector< std::shared_ptr<SeedAlignerSearchSave> > savev;
+	     std::vector<size_t> recloop;
+	     savev.reserve(nels); recloop.reserve(nels);
+	     for (size_t n=0; n<nels; n++) { // first get recloop
+		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		const InstantiatedSeed& s = *p.al.s_;
+		if((p.step<(int)i)||(i>=s.steps.size())) continue;
+		if(!bailv[n]) {
+				SeedAlignerSearchState& sstate = sstatev[n];
+
+				int c = (*p.al.seq_)[sstate.off];
+
+				//
+				bool leaveZone = s.zones[i].first < 0;
+				//bool leaveZoneIns = zones_[i].second < 0;
+				Constraint& cons    = p.cv[abs(s.zones[i].first)];
+
+				int q = (*p.al.qual_)[sstate.off];
+				if((cons.canMismatch(q, *p.al.sc_) && p.overall.canMismatch(q, *p.al.sc_)) || c == 4) {
+					SeedAlignerSearchSave* psave = new SeedAlignerSearchSave(cons, p.overall, p.tloc, p.bloc);
+					savev.push_back( std::shared_ptr<SeedAlignerSearchSave>(psave) );
+
+					if(c != 4) {
+						cons.chargeMismatch(q, *p.al.sc_);
+						p.overall.chargeMismatch(q, *p.al.sc_);
+					}
+					// Can leave the zone as-is
+					if(!leaveZone || (cons.acceptable() && p.overall.acceptable())) {
+						recloop.push_back(n);
+					} else {
+						// Not enough edits to make this path
+						// non-redundant with other seeds
+					}
+				}
+			}
+	     } // for n
+	     const size_t nrlels = recloop.size();
+	     for(int j = 0; j < 4; j++) { // must be executed in order
+		std::vector< std::shared_ptr<SeedAlignerSearchRecState> > rstatev_save;
+		std::vector< std::shared_ptr<MultiSeedAlignerSearchParams> > p2v_save;
+		std::vector<MultiSeedAlignerSearchParams*> p2v;
+		rstatev_save.reserve(nrlels);
+		p2v_save.reserve(nrlels); p2v.reserve(nrlels);
+		for (size_t ni=0; ni<nrlels; ni++) { // build p2v
+			const size_t n=recloop[ni];
+			MultiSeedAlignerSearchParams &p = *(ppv[n]);
+			SeedAlignerSearchState& sstate = sstatev[n];
+
+			int c = (*p.al.seq_)[sstate.off];
+			if(j == c || sstate.b[j] == sstate.t[j]) continue;
+
+			// Potential mismatch
+			SeedAlignerSearchRecState* prstate = new SeedAlignerSearchRecState(j, c, sstate, p.prevEdit);
+			rstatev_save.push_back(std::shared_ptr<SeedAlignerSearchRecState>(prstate));
+
+			p.al.nextLocsBi(p.tloc, p.bloc, prstate->bwt, i+1);
+			p.al.bwedits_++;
+			MultiSeedAlignerSearchParams* p2 = new MultiSeedAlignerSearchParams(
+				p.al,              // SeedAligner object associated with params
+				i+1,               // depth into steps_[] array
+				prstate->bwt,      // The 4 BWT idxs
+				p.tloc,            // locus for top (perhaps unititialized)
+				p.bloc,            // locus for bot (perhaps unititialized)
+				p.cv,              // constraints to enforce in seed zones
+				p.overall,         // overall constraints to enforce
+				&prstate->editl);  // latest edit
+			p2v.push_back(p2);
+			p2v_save.push_back(std::shared_ptr<MultiSeedAlignerSearchParams>(p2) );
+		} // for ni
+		// recurse all of the p2v elements at once
+		if(!searchSeedBi(
+			depth+1, // recursion depth
+			p2v))
+		{
+			// oom detected, just bail out all the nels
+			return false;
+		}
+		// as rstatev gets out of scope, p.prevEdit->next is updated
+	     } // for j
+
+	     // as savev gets out of scope,
+             // restores cons, p.overall, p.tloc, p.bloc
+	   } // end savev and rstatev scope
+
+	   for (size_t n=0; n<nels; n++) { // OK to iterate, could be parallel, too
+		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		const InstantiatedSeed& s = *p.al.s_;
+		if((p.step<(int)i)||(i>=s.steps.size())) continue;
+		SeedAlignerSearchState& sstate = sstatev[n];
+		Constraint& cons    = p.cv[abs(s.zones[i].first)];
+
+		if(!bailv[n]) {
+				if(cons.canGap() && p.overall.canGap()) {
+					throw 1; // TODO
+//					int delEx = 0;
+//					if(cons.canDelete(delEx, *sc_) && overall.canDelete(delEx, *sc_)) {
+//						// Try delete
+//					}
+//					int insEx = 0;
+//					if(insCons.canInsert(insEx, *sc_) && overall.canInsert(insEx, *sc_)) {
+//						// Try insert
+//					}
+				}
+		}
+
+		int c = (*p.al.seq_)[sstate.off];
+		if(c == 4) {
+			// couldn't handle the N
+			p.step = -1; // invalidate, same as marking it done
+			continue;
+		}
+
+		bool leaveZone = s.zones[i].first < 0;
+
+		if(leaveZone && (!cons.acceptable() || !p.overall.acceptable())) {
+			// Not enough edits to make this path non-redundant with
+			// other seeds
+			p.step = -1; // invalidate, same as marking it done
+			continue;
+		}
+		if(!p.bloc.valid()) {
+			assert(p.al.ebwtBw_ == NULL || sstate.bp[c] == sstate.tp[c]+1);
+			// Range delimited by tloc/bloc has size 1
+			p.al.bwops_++;
+			sstate.t[c] = sstate.ebwt->mapLF1(sstate.ntop, p.tloc, c);
+			if(sstate.t[c] == OFF_MASK) {
+				p.step = -1; // invalidate, same as marking it done
+				continue;
+			}
+			assert_geq(sstate.t[c], sstate.ebwt->fchr()[c]);
+			assert_lt(sstate.t[c],  sstate.ebwt->fchr()[c+1]);
+			sstate.b[c] = sstate.t[c]+1;
+			assert_gt(sstate.b[c], 0);
+		}
+		assert(p.al.ebwtBw_ == NULL || sstate.bf[c]-sstate.tf[c] == sstate.bb[c]-sstate.tb[c]);
+		sstate.assertLeqAndSetLastTot(sstate.bf[c]-sstate.tf[c]);
+		if(sstate.b[c] == sstate.t[c]) {
+			return true;
+		}
+		p.bwt.set(sstate.tf[c], sstate.bf[c], sstate.tb[c], sstate.bb[c]);
+		if(i+1 == s.steps.size()) {
+			// Finished aligning seed
+			p.checkCV();
+			if(!p.al.reportHit(p.bwt, p.al.seq_->length(), p.prevEdit)) {
+				return false; // Memory exhausted
+			}
+			return true;
+		}
+		p.al.nextLocsBi(p.tloc, p.bloc, p.bwt, i+1);
+	   } // for n
+	} // for i
 	return true;
 }
 
@@ -1889,6 +2350,24 @@ SeedAligner::searchSeedBi() {
 	SeedAlignerSearchParams p(s_->cons[0], s_->cons[1], s_->cons[2], s_->overall, NULL);
 	return searchSeedBi(0, p);
 }
+
+// MultiSeedAligner version of the initial invocation
+bool
+MultiSeedAligner::searchSeedBi(std::vector< SeedAligner* > &palv) {
+	// use a self-cleaning version for ease of use
+	std::vector< std::shared_ptr<MultiSeedAlignerSearchParams> > ppv_save;
+	// but pass the unmanaged vector to the outside
+	std::vector< MultiSeedAlignerSearchParams* > ppv;
+	ppv_save.reserve(palv.size()); ppv.reserve(palv.size());
+	for(auto pal : palv) {
+		const InstantiatedSeed* s = pal->s_;
+		MultiSeedAlignerSearchParams* p = new MultiSeedAlignerSearchParams(*pal, s->cons[0], s->cons[1], s->cons[2], s->overall, NULL);
+		ppv.push_back( p );
+		ppv_save.push_back( std::shared_ptr<MultiSeedAlignerSearchParams>( p ) );
+	}
+	return searchSeedBi(0, ppv);
+}
+
 
 #ifdef ALIGNER_SEED_MAIN
 

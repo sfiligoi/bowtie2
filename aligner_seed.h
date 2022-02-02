@@ -1565,6 +1565,8 @@ public:
 		SeedResults&       hits,   // holds all the seed hits (and exact hit)
 		SeedSearchMetrics& met);   // metrics
 
+	friend class MultiSeedAligner;
+
 protected:
 
 	void setRead(
@@ -1687,6 +1689,44 @@ protected:
 	
 	ASSERT_ONLY(ESet<BTDnaString> hits_); // Ref hits so far for seed being aligned
 	BTDnaString tmpdnastr_;
+};
+
+class MultiSeedAlignerSearchParams;
+
+/**
+ * Multi-read SeedAligner
+ *  - Has no state, just a convenience container
+ */
+class MultiSeedAligner {
+
+public:
+
+	void searchAllSeeds(
+		std::vector< SeedAligner* > &palv,             // seed aligners
+		const std::vector< EList<Seed>* > &pseedsv,    // search seeds
+		const Ebwt* ebwtFw,                            // BWT index
+		const Ebwt* ebwtBw,                            // BWT' index
+		const std::vector< Read* > &preadv,            // read to align
+		const Scoring& pens,                           // scoring scheme
+		std::vector< AlignmentCacheIface* > &pcachev,  // local cache for seed alignments
+		std::vector< SeedResults* > &psrv,             // holds all the seed hits
+		std::vector< SeedSearchMetrics* > &pmetv,      // metrics
+		std::vector< PerReadMetrics* > &pprmv);        // per-read metrics
+
+protected:
+
+	/**
+	 * Given an instantiated seed (in s_ and other fields), search
+	 */
+	bool searchSeedBi(std::vector< SeedAligner* > &palv);
+
+	/**
+	 * Main, recursive implementation of the seed search.
+	 */
+	bool searchSeedBi(
+		int depth,             // recursion depth
+		std::vector< MultiSeedAlignerSearchParams* > &ppv); // all the remaining params
+
 };
 
 #define INIT_LOCS(top, bot, tloc, bloc, e) { \
