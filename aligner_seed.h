@@ -1621,13 +1621,6 @@ protected:
 	 */
 	bool searchSeedBi();
 	
-	/**
-	 * Main, recursive implementation of the seed search.
-	 */
-	bool searchSeedBi(
-		int depth,             // recursion depth
-		SeedAlignerSearchParams &p); // all the remaining params
-
 	// helper function
 	bool startSearchSeedBi(
 		int depth,            // recursion depth
@@ -1713,17 +1706,18 @@ public:
 		std::vector< SeedSearchMetrics* > &pmetv,      // metrics
 		std::vector< PerReadMetrics* > &pprmv);        // per-read metrics
 
+	friend class SeedAligner;
 protected:
 
 	/**
 	 * Given an instantiated seed (in s_ and other fields), search
 	 */
-	bool searchSeedBi(std::vector< SeedAligner* > &palv);
+	static bool searchSeedBi(std::vector< SeedAligner* > &palv);
 
 	/**
 	 * Main, recursive implementation of the seed search.
 	 */
-	bool searchSeedBi(
+	static bool searchSeedBi(
 		int depth,             // recursion depth
 		std::vector< MultiSeedAlignerSearchParams* > &ppv); // all the remaining params
 

@@ -1879,171 +1879,6 @@ private:
 	DoublyLinkedList<Edit> *_prevEdit;
 };
 
-/**
- * Given a seed, search.  Assumes zone 0 = no backtracking.
- *
- * Return a list of Seed hits.
- * 1. Edits
- * 2. Bidirectional BWT range(s) on either end
- */
-bool
-SeedAligner::searchSeedBi(
-	int depth,            // recursion depth
-	SeedAlignerSearchParams &p // all the remaining params
-#if 0
-	, const SABWOffTrack* prevOt // prev off tracker (if tracking started)
-#endif
-	)
-{
-	bool oom = false;
-	bool done = startSearchSeedBi(
-			depth,
-			p,
-			oom);
-	if(done) {
-		return !oom;
-	}
-
-	SeedAlignerSearchState sstate;
-	sstate.initLastTot(p.bwt.botf - p.bwt.topf);
-	const InstantiatedSeed& s = *s_;
-	for(size_t i = p.step; i < s.steps.size(); i++) {
-		assert_gt(p.bwt.botf, p.bwt.topf);
-		assert(p.bwt.botf - p.bwt.topf == 1 ||  p.bloc.valid());
-		assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
-		assert(ebwtBw_ == NULL || p.bwt.botf-p.bwt.topf == p.bwt.botb-p.bwt.topb);
-		assert(p.tloc.valid());
-		sstate.setOff(s.steps[i], p.bwt, ebwtFw_, ebwtBw_);
-		__builtin_prefetch(&((*seq_)[sstate.off]));
-		__builtin_prefetch(&((*qual_)[sstate.off]));
-		if(p.bloc.valid()) {
-			// Range delimited by tloc/bloc has size >1.  If size == 1,
-			// we use a simpler query (see if(!bloc.valid()) blocks below)
-			bwops_++;
-			sstate.ebwt->mapBiLFEx(p.tloc, p.bloc, sstate.t, sstate.b, sstate.tp, sstate.bp);
-			ASSERT_ONLY(TIndexOffU tot = (sstate.b[0]-sstate.t[0])+(sstate.b[1]-sstate.t[1])+(sstate.b[2]-sstate.t[2])+(sstate.b[3]-sstate.t[3]));
-			ASSERT_ONLY(TIndexOffU totp = (sstate.bp[0]-sstate.tp[0])+(sstate.bp[1]-sstate.tp[1])+(sstate.bp[2]-sstate.tp[2])+(sstate.bp[3]-sstate.tp[3]));
-			assert_eq(tot, totp);
-#ifndef NDEBUG
-			sstate.assertLeqAndSetLastTot(tot);
-#endif
-		}
-		int c = (*seq_)[sstate.off];  assert_range(0, 4, c);
-		// not 100% sure we need it, but redundant prefetches are not dangerous
-		// and helps in the average case
-		prefetchNextLocsBi(sstate.tf[c], sstate.bf[c], sstate.tb[c], sstate.bb[c], i+1);
-
-		//
-		bool leaveZone = s.zones[i].first < 0;
-		//bool leaveZoneIns = zones_[i].second < 0;
-		Constraint& cons    = p.cv[abs(s.zones[i].first)];
-		//Constraint& insCons = p.cv[abs(s.zones[i].second)];
-		// Is it legal for us to advance on characters other than 'c'?
-		if(!(cons.mustMatch() && !p.overall.mustMatch()) || c == 4) {
-			// There may be legal edits
-			bool bail = false;
-			if(!p.bloc.valid()) {
-				// Range delimited by tloc/bloc has size 1
-				bwops_++;
-				int cc = sstate.ebwt->mapLF1(sstate.ntop, p.tloc);
-				assert_range(-1, 3, cc);
-				if(cc < 0) bail = true;
-				else { sstate.t[cc] = sstate.ntop; sstate.b[cc] = sstate.ntop+1; }
-			}
-			if(!bail) {
-				int q = (*qual_)[sstate.off];
-				if((cons.canMismatch(q, *sc_) && p.overall.canMismatch(q, *sc_)) || c == 4) {
-					SeedAlignerSearchSave save(cons, p.overall, p.tloc, p.bloc);
-					if(c != 4) {
-						cons.chargeMismatch(q, *sc_);
-						p.overall.chargeMismatch(q, *sc_);
-					}
-					// Can leave the zone as-is
-					if(!leaveZone || (cons.acceptable() && p.overall.acceptable())) {
-						for(int j = 0; j < 4; j++) {
-							if(j == c || sstate.b[j] == sstate.t[j]) continue;
-							// Potential mismatch
-							SeedAlignerSearchRecState rstate(j, c, sstate, p.prevEdit);
-							nextLocsBi(p.tloc, p.bloc, rstate.bwt, i+1);
-							bwedits_++;
-							SeedAlignerSearchParams p2(
-								i+1,             // depth into steps_[] array
-								rstate.bwt,      // The 4 BWT idxs
-								p.tloc,          // locus for top (perhaps unititialized)
-								p.bloc,          // locus for bot (perhaps unititialized)
-								p.cv,            // constraints to enforce in seed zones
-								p.overall,       // overall constraints to enforce
-								&rstate.editl);  // latest edit
-							if(!searchSeedBi(
-								depth+1, // recursion depth
-								p2))
-							{
-								return false;
-							}
-
-							// as rstate gets out of scope, p.prevEdit->next is updated
-						}
-					} else {
-						// Not enough edits to make this path
-						// non-redundant with other seeds
-					}
-
-					// as save gets out of scope,
-					// restores cons, p.overall, p.tloc, p.bloc
-				}
-				if(cons.canGap() && p.overall.canGap()) {
-					throw 1; // TODO
-//					int delEx = 0;
-//					if(cons.canDelete(delEx, *sc_) && overall.canDelete(delEx, *sc_)) {
-//						// Try delete
-//					}
-//					int insEx = 0;
-//					if(insCons.canInsert(insEx, *sc_) && overall.canInsert(insEx, *sc_)) {
-//						// Try insert
-//					}
-				}
-			} // if(!bail)
-		}
-		if(c == 4) {
-			return true; // couldn't handle the N
-		}
-		if(leaveZone && (!cons.acceptable() || !p.overall.acceptable())) {
-			// Not enough edits to make this path non-redundant with
-			// other seeds
-			return true;
-		}
-		if(!p.bloc.valid()) {
-			assert(ebwtBw_ == NULL || sstate.bp[c] == sstate.tp[c]+1);
-			// Range delimited by tloc/bloc has size 1
-			bwops_++;
-			sstate.t[c] = sstate.ebwt->mapLF1(sstate.ntop, p.tloc, c);
-			if(sstate.t[c] == OFF_MASK) {
-				return true;
-			}
-			assert_geq(sstate.t[c], sstate.ebwt->fchr()[c]);
-			assert_lt(sstate.t[c],  sstate.ebwt->fchr()[c+1]);
-			sstate.b[c] = sstate.t[c]+1;
-			assert_gt(sstate.b[c], 0);
-		}
-		assert(ebwtBw_ == NULL || sstate.bf[c]-sstate.tf[c] == sstate.bb[c]-sstate.tb[c]);
-		sstate.assertLeqAndSetLastTot(sstate.bf[c]-sstate.tf[c]);
-		if(sstate.b[c] == sstate.t[c]) {
-			return true;
-		}
-		p.bwt.set(sstate.tf[c], sstate.bf[c], sstate.tb[c], sstate.bb[c]);
-		if(i+1 == s.steps.size()) {
-			// Finished aligning seed
-			p.checkCV();
-			if(!reportHit(p.bwt, seq_->length(), p.prevEdit)) {
-				return false; // Memory exhausted
-			}
-			return true;
-		}
-		nextLocsBi(p.tloc, p.bloc, p.bwt, i+1);
-	} // for i
-	return true;
-}
-
 class MultiSeedAlignerSearchParams : public SeedAlignerSearchParams {
 public:
 	SeedAligner& al;
@@ -2089,6 +1924,14 @@ public:
 	, al(_al)
 	{}
 };
+
+/**
+ * Given a seed, search.  Assumes zone 0 = no backtracking.
+ *
+ * Return a list of Seed hits.
+ * 1. Edits
+ * 2. Bidirectional BWT range(s) on either end
+ */
 
 bool
 MultiSeedAligner::searchSeedBi(
@@ -2347,8 +2190,9 @@ MultiSeedAligner::searchSeedBi(
  */
 bool
 SeedAligner::searchSeedBi() {
-	SeedAlignerSearchParams p(s_->cons[0], s_->cons[1], s_->cons[2], s_->overall, NULL);
-	return searchSeedBi(0, p);
+	MultiSeedAlignerSearchParams p(*this, s_->cons[0], s_->cons[1], s_->cons[2], s_->overall, NULL);
+	std::vector< MultiSeedAlignerSearchParams* > ppv(1, &p);
+	return MultiSeedAligner::searchSeedBi(0, ppv);
 }
 
 // MultiSeedAligner version of the initial invocation
