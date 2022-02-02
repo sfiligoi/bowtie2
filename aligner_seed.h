@@ -290,19 +290,6 @@ struct Constraint {
 	static Constraint editBased(int edits);
 };
 
-template< std::size_t N>
-class Constraints {
-public:
-	// default constructor is OK
-
-	bool acceptable() const {
-		bool acct = true;
-		for(auto c : cv) acct &= *c;
-	}
-
-	std::array<Constraint,N> cv;
-};
-
 /**
  * We divide seed search strategies into three categories:
  *
@@ -1469,6 +1456,8 @@ struct SeedSearchMetrics {
 	MUTEX_T  mutex_m;
 };
 
+class SeedAlignerSearchParams;
+
 /**
  * Given an index and a seeding scheme, searches for seed hits.
  */
@@ -1636,26 +1625,13 @@ protected:
 	bool searchSeedBi(
 		int step,              // depth into steps_[] array
 		int depth,             // recursion depth
-		BwtTopBot bwt,         // The 4 BWT idxs
-		SideLocus tloc,        // locus for top (perhaps unititialized)
-		SideLocus bloc,        // locus for bot (perhaps unititialized)
-		Constraint c0,         // constraints to enforce in seed zone 0
-		Constraint c1,         // constraints to enforce in seed zone 1
-		Constraint c2,         // constraints to enforce in seed zone 2
-		Constraint overall,    // overall constraints
-		DoublyLinkedList<Edit> *prevEdit);  // previous edit
+		SeedAlignerSearchParams &p); // all the remaining params
 
 	// helper function
 	bool startSearchSeedBi(
 		int depth,            // recursion depth
-		const Constraint &c0, // constraints to enforce in seed zone 0
-		const Constraint &c1, // constraints to enforce in seed zone 1
-		const Constraint &c2, // constraints to enforce in seed zone 2
-		DoublyLinkedList<Edit> *prevEdit,  // previous edit
 		int &step,            // depth into steps_[] array
-		BwtTopBot &bwt,        // The 4 BWT idxs
-		SideLocus &tloc,      // locus for top (perhaps unititialized)
-		SideLocus &bloc,      // locus for bot (perhaps unititialized)
+		SeedAlignerSearchParams &p, // all the remaining params
 		bool &oom);           // did we run out of memory?
 
 	/**
