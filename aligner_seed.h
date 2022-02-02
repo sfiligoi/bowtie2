@@ -1623,14 +1623,12 @@ protected:
 	 * Main, recursive implementation of the seed search.
 	 */
 	bool searchSeedBi(
-		int step,              // depth into steps_[] array
 		int depth,             // recursion depth
 		SeedAlignerSearchParams &p); // all the remaining params
 
 	// helper function
 	bool startSearchSeedBi(
 		int depth,            // recursion depth
-		int &step,            // depth into steps_[] array
 		SeedAlignerSearchParams &p, // all the remaining params
 		bool &oom);           // did we run out of memory?
 
