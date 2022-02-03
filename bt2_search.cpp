@@ -4356,19 +4356,18 @@ static void multiseedSearchWorker(void *vp) {
 						auto  pprmv   = mmstatev.pprmv(idxs);
 
 						const size_t nels = palv.size();
-						for (size_t i=0; i<nels; i++) {
-								// Align seeds
-								palv[i]->searchAllSeeds(
-									*(pseedsv[i]),     // search seeds
-									&ebwtFw,          // BWT index
-									ebwtBw,           // BWT' index
-									*(prdsv[i]),       // read
-									sc,               // scoring scheme
-									*(pcav[i]),               // alignment cache
-									*(pshsv[i]),        // store seed hits here
-									*(psdmv[i]),              // metrics
-									*(pprmv[i]));             // per-read metrics
-						}
+						// search all at once
+						MultiSeedAligner::searchAllSeeds(
+								palv,                // seed aligner vector
+								pseedsv,             // search seeds vector
+								&ebwtFw,             // BWT index
+								ebwtBw,              // BWT' index
+								prdsv,               // read vector
+								sc,                  // scoring scheme
+								pcav,                // alignment cache vector
+								pshsv,               // store seed hits here vector
+								psdmv,               // metrics vector
+								pprmv);              // per-read metrics vector
 						for (size_t i=0; i<nels; i++) {
 								assert(pshsv[i]->repOk(&pcav[i]->current()));
 								if(pshsv[i]->empty()) {

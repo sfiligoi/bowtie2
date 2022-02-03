@@ -618,10 +618,10 @@ void SeedAligner::searchAllSeeds(
 // MultiSeedAligner equivalent of SeedAligner::searchAllSeeds
 void MultiSeedAligner::searchAllSeeds(
 	std::vector< SeedAligner* > &palv,             // seed aligners
-	const std::vector< EList<Seed>* > &pseedsv,    // search seeds
+	const std::vector< const EList<Seed>* > &pseedsv,    // search seeds
 	const Ebwt* ebwtFw,                            // BWT index
 	const Ebwt* ebwtBw,                            // BWT' index
-	const std::vector< Read* > &preadv,            // read to align
+	const std::vector< const Read* > &preadv,            // read to align
 	const Scoring& pens,                           // scoring scheme
 	std::vector< AlignmentCacheIface* > &pcachev,  // local cache for seed alignments
 	std::vector< SeedResults* > &psrv,             // holds all the seed hits
