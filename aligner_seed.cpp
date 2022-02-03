@@ -2106,13 +2106,15 @@ MultiSeedAligner::searchSeedBi(
 			p2v.push_back(p2);
 			p2v_save.push_back(std::shared_ptr<MultiSeedAlignerSearchParams>(p2) );
 		} // for ni
-		// recurse all of the p2v elements at once
-		if(!searchSeedBi(
-			depth+1, // recursion depth
-			p2v))
-		{
-			// oom detected, just bail out all the nels
-			return false;
+		if(p2v.size()>0) {
+			// recurse all of the p2v elements at once
+			if(!searchSeedBi(
+				depth+1, // recursion depth
+				p2v))
+			{
+				// oom detected, just bail out all the nels
+				return false;
+			}
 		}
 		// as rstatev gets out of scope, p.prevEdit->next is updated
 	     } // for j
@@ -2172,7 +2174,8 @@ MultiSeedAligner::searchSeedBi(
 		assert(p.al.ebwtBw_ == NULL || sstate.bf[c]-sstate.tf[c] == sstate.bb[c]-sstate.tb[c]);
 		sstate.assertLeqAndSetLastTot(sstate.bf[c]-sstate.tf[c]);
 		if(sstate.b[c] == sstate.t[c]) {
-			return true;
+			p.step = -1; // invalidate, same as marking it done
+			continue;
 		}
 		p.bwt.set(sstate.tf[c], sstate.bf[c], sstate.tb[c], sstate.bb[c]);
 		if(i+1 == s.steps.size()) {
@@ -2181,7 +2184,8 @@ MultiSeedAligner::searchSeedBi(
 			if(!p.al.reportHit(p.bwt, p.al.seq_->length(), p.prevEdit)) {
 				return false; // Memory exhausted
 			}
-			return true;
+			p.step = -1; // invalidate, same as marking it done
+			continue;
 		}
 		p.al.nextLocsBi(p.tloc, p.bloc, p.bwt, i+1);
 	   } // for n
