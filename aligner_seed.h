@@ -1566,6 +1566,7 @@ public:
 		SeedSearchMetrics& met);   // metrics
 
 	friend class MultiSeedAligner;
+	friend class MultiSeedAlignerSearchParams;
 
 protected:
 

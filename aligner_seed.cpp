@@ -1879,6 +1879,7 @@ private:
 class MultiSeedAlignerSearchParams : public SeedAlignerSearchParams {
 public:
 	SeedAligner& al;
+	bool done;
 
 
 	MultiSeedAlignerSearchParams(
@@ -1892,6 +1893,7 @@ public:
 		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
 	: SeedAlignerSearchParams(_step, _bwt, _tloc, _bloc, _cv, _overall, _prevEdit)
 	, al(_al)
+	, done(false)
 	{}
 
 	MultiSeedAlignerSearchParams(
@@ -1907,6 +1909,7 @@ public:
 		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
 	: SeedAlignerSearchParams(_step, _bwt, _tloc, _bloc, _c0, _c1, _c2, _overall, _prevEdit)
 	, al(_al)
+	, done(false)
 	{}
 
 	// create an empty bwt, tloc and bloc
@@ -1919,7 +1922,12 @@ public:
 		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
 	: SeedAlignerSearchParams(_c0, _c1, _c2, _overall, _prevEdit)
 	, al(_al)
+	, done(false)
 	{}
+
+	bool isValid(size_t i) const {
+		return ( (!done) && (i>=((size_t)step)) && (i<al.s_->steps.size()) );
+	}
 };
 
 class MultiSeedAlignerSearchState : public SeedAlignerSearchState {
@@ -1956,10 +1964,10 @@ MultiSeedAligner::searchSeedBi(
 				my_oom);
 		if(my_done) {
 			if (my_oom) {
+				// Memory problem, get out for all
 				return false;
 			}
-			// only >=0 steps are valid, so make it invalid
-			p.step = -1;
+			p.done = true;
 		}
 		done &= my_done;
 	}
@@ -1973,35 +1981,39 @@ MultiSeedAligner::searchSeedBi(
 
 	for (size_t n=0; n<nels; n++) {
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
-		if (p.step<0) continue; // invalid => done
+		if (p.done) continue; // invalid => done
+
+		const InstantiatedSeed& s = *p.al.s_;
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+
 		if((size_t)p.step<min_step) min_step=p.step;
 
-		const size_t ssteps = p.al.s_->steps.size();
+		const size_t ssteps = s.steps.size();
 		if(ssteps>max_step) max_step=ssteps;
 
-		sstatev[n].initLastTot(p.bwt.botf - p.bwt.topf);
+		sstate.initLastTot(p.bwt.botf - p.bwt.topf);
 	}
 	for(size_t i = min_step; i < max_step; i++) {
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
-		if((p.step<(int)i)||(i>=s.steps.size())) continue;
-		SeedAlignerSearchState& sstate = sstatev[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
 
 		assert_gt(p.bwt.botf, p.bwt.topf);
 		assert(p.bwt.botf - p.bwt.topf == 1 ||  p.bloc.valid());
 		assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
 		assert(p.al.ebwtBw_ == NULL || p.bwt.botf-p.bwt.topf == p.bwt.botb-p.bwt.topb);
 		assert(p.tloc.valid());
-		sstate.setOff(p.al.s_->steps[i], p.bwt, p.al.ebwtFw_, p.al.ebwtBw_);
+		sstate.setOff(s.steps[i], p.bwt, p.al.ebwtFw_, p.al.ebwtBw_);
 		__builtin_prefetch(&((*p.al.seq_)[sstate.off]));
 		__builtin_prefetch(&((*p.al.qual_)[sstate.off]));
 	   }
 
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
-		if((p.step<(int)i)||(i>=s.steps.size())) continue;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
 
 		if(p.bloc.valid()) {
@@ -2047,8 +2059,7 @@ MultiSeedAligner::searchSeedBi(
 	     savev.reserve(nels); recloop.reserve(nels);
 	     for (size_t n=0; n<nels; n++) { // first get recloop
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
-		const InstantiatedSeed& s = *p.al.s_;
-		if((p.step<(int)i)||(i>=s.steps.size())) continue;
+		if(!p.isValid(i)) continue;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
 		if(!sstate.bail) {
 				int c = sstate.c;
@@ -2126,8 +2137,8 @@ MultiSeedAligner::searchSeedBi(
 
 	   for (size_t n=0; n<nels; n++) { // OK to iterate, could be parallel, too
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
-		if((p.step<(int)i)||(i>=s.steps.size())) continue;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
 		Constraint& cons    = *sstate.pcons;
 
@@ -2148,14 +2159,14 @@ MultiSeedAligner::searchSeedBi(
 		int c = sstate.c;
 		if(c == 4) {
 			// couldn't handle the N
-			p.step = -1; // invalidate, same as marking it done
+			p.done = true;
 			continue;
 		}
 
 		if(sstate.leaveZone && (!cons.acceptable() || !p.overall.acceptable())) {
 			// Not enough edits to make this path non-redundant with
 			// other seeds
-			p.step = -1; // invalidate, same as marking it done
+			p.done = true;
 			continue;
 		}
 		if(!p.bloc.valid()) {
@@ -2164,7 +2175,7 @@ MultiSeedAligner::searchSeedBi(
 			p.al.bwops_++;
 			sstate.t[c] = sstate.ebwt->mapLF1(sstate.ntop, p.tloc, c);
 			if(sstate.t[c] == OFF_MASK) {
-				p.step = -1; // invalidate, same as marking it done
+				p.done = true;
 				continue;
 			}
 			assert_geq(sstate.t[c], sstate.ebwt->fchr()[c]);
@@ -2175,7 +2186,7 @@ MultiSeedAligner::searchSeedBi(
 		assert(p.al.ebwtBw_ == NULL || sstate.bf[c]-sstate.tf[c] == sstate.bb[c]-sstate.tb[c]);
 		sstate.assertLeqAndSetLastTot(sstate.bf[c]-sstate.tf[c]);
 		if(sstate.b[c] == sstate.t[c]) {
-			p.step = -1; // invalidate, same as marking it done
+			p.done = true;
 			continue;
 		}
 		p.bwt.set(sstate.tf[c], sstate.bf[c], sstate.tb[c], sstate.bb[c]);
@@ -2185,7 +2196,7 @@ MultiSeedAligner::searchSeedBi(
 			if(!p.al.reportHit(p.bwt, p.al.seq_->length(), p.prevEdit)) {
 				return false; // Memory exhausted
 			}
-			p.step = -1; // invalidate, same as marking it done
+			p.done = true;
 			continue;
 		}
 		p.al.nextLocsBi(p.tloc, p.bloc, p.bwt, i+1);
