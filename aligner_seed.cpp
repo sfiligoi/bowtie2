@@ -1653,9 +1653,6 @@ public:
 	, prevEdit(_prevEdit)
 	{}
 
-	// virtual destructor needed for proper polimorphism
-	virtual ~SeedAlignerSearchParams() {}
-
 	void checkCV() const {
 			assert(cv[0].acceptable());
 			assert(cv[1].acceptable());
@@ -1925,6 +1922,14 @@ public:
 	{}
 };
 
+class MultiSeedAlignerSearchState : public SeedAlignerSearchState {
+public:
+	bool bail;
+	bool leaveZone;
+	int c;
+	Constraint* pcons;
+};
+
 /**
  * Given a seed, search.  Assumes zone 0 = no backtracking.
  *
@@ -1961,7 +1966,7 @@ MultiSeedAligner::searchSeedBi(
 		return true;
 	}
 
-	std::vector<SeedAlignerSearchState> sstatev(nels);
+	std::vector<MultiSeedAlignerSearchState> sstatev(nels);
 	size_t min_step=INT_MAX;
 	size_t max_step=0;
 
@@ -1992,12 +1997,11 @@ MultiSeedAligner::searchSeedBi(
 		__builtin_prefetch(&((*p.al.qual_)[sstate.off]));
 	   }
 
-	   std::vector<bool> bailv(nels,true);
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
 		const InstantiatedSeed& s = *p.al.s_;
 		if((p.step<(int)i)||(i>=s.steps.size())) continue;
-		SeedAlignerSearchState& sstate = sstatev[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
 
 		if(p.bloc.valid()) {
 			// Range delimited by tloc/bloc has size >1.  If size == 1,
@@ -2013,23 +2017,29 @@ MultiSeedAligner::searchSeedBi(
 		}
 
 		int c = (*p.al.seq_)[sstate.off];  assert_range(0, 4, c);
+		sstate.c = c;
+
+		sstate.leaveZone = s.zones[i].first < 0;
 
 		Constraint& cons    = p.cv[abs(s.zones[i].first)];
+		sstate.pcons = &cons;
+
+		sstate.bail = true;
 		//Constraint& insCons = p.cv[abs(s.zones[i].second)];
 		// Is it legal for us to advance on characters other than 'c'?
 		if(!(cons.mustMatch() && !p.overall.mustMatch()) || c == 4) {
 			// There may be legal edits
-			bailv[n] = false;
+			sstate.bail = false;
 			if(!p.bloc.valid()) {
 				// Range delimited by tloc/bloc has size 1
 				p.al.bwops_++;
 				int cc = sstate.ebwt->mapLF1(sstate.ntop, p.tloc);
 				assert_range(-1, 3, cc);
-				if(cc < 0) bailv[n] = true;
+				if(cc < 0) sstate.bail = true;
 				else { sstate.t[cc] = sstate.ntop; sstate.b[cc] = sstate.ntop+1; }
 			}
 		}
-	     }
+	   } // for n
 	   {
 	     std::vector< std::shared_ptr<SeedAlignerSearchSave> > savev;
 	     std::vector<size_t> recloop;
@@ -2038,15 +2048,11 @@ MultiSeedAligner::searchSeedBi(
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
 		const InstantiatedSeed& s = *p.al.s_;
 		if((p.step<(int)i)||(i>=s.steps.size())) continue;
-		if(!bailv[n]) {
-				SeedAlignerSearchState& sstate = sstatev[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+		if(!sstate.bail) {
+				int c = sstate.c;
 
-				int c = (*p.al.seq_)[sstate.off];
-
-				//
-				bool leaveZone = s.zones[i].first < 0;
-				//bool leaveZoneIns = zones_[i].second < 0;
-				Constraint& cons    = p.cv[abs(s.zones[i].first)];
+				Constraint& cons    = *sstate.pcons;
 
 				int q = (*p.al.qual_)[sstate.off];
 				if((cons.canMismatch(q, *p.al.sc_) && p.overall.canMismatch(q, *p.al.sc_)) || c == 4) {
@@ -2058,7 +2064,7 @@ MultiSeedAligner::searchSeedBi(
 						p.overall.chargeMismatch(q, *p.al.sc_);
 					}
 					// Can leave the zone as-is
-					if(!leaveZone || (cons.acceptable() && p.overall.acceptable())) {
+					if(!sstate.leaveZone || (cons.acceptable() && p.overall.acceptable())) {
 						recloop.push_back(n);
 					} else {
 						// Not enough edits to make this path
@@ -2077,9 +2083,9 @@ MultiSeedAligner::searchSeedBi(
 		for (size_t ni=0; ni<nrlels; ni++) { // build p2v
 			const size_t n=recloop[ni];
 			MultiSeedAlignerSearchParams &p = *(ppv[n]);
-			SeedAlignerSearchState& sstate = sstatev[n];
+			MultiSeedAlignerSearchState& sstate = sstatev[n];
 
-			int c = (*p.al.seq_)[sstate.off];
+			int c = sstate.c;
 			if(j == c || sstate.b[j] == sstate.t[j]) continue;
 
 			// Potential mismatch
@@ -2113,16 +2119,16 @@ MultiSeedAligner::searchSeedBi(
 
 	     // as savev gets out of scope,
              // restores cons, p.overall, p.tloc, p.bloc
-	   } // end savev and rstatev scope
+	   } // end savev and recloop scope
 
 	   for (size_t n=0; n<nels; n++) { // OK to iterate, could be parallel, too
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
 		const InstantiatedSeed& s = *p.al.s_;
 		if((p.step<(int)i)||(i>=s.steps.size())) continue;
-		SeedAlignerSearchState& sstate = sstatev[n];
-		Constraint& cons    = p.cv[abs(s.zones[i].first)];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+		Constraint& cons    = *sstate.pcons;
 
-		if(!bailv[n]) {
+		if(!sstate.bail) {
 				if(cons.canGap() && p.overall.canGap()) {
 					throw 1; // TODO
 //					int delEx = 0;
@@ -2136,16 +2142,14 @@ MultiSeedAligner::searchSeedBi(
 				}
 		}
 
-		int c = (*p.al.seq_)[sstate.off];
+		int c = sstate.c;
 		if(c == 4) {
 			// couldn't handle the N
 			p.step = -1; // invalidate, same as marking it done
 			continue;
 		}
 
-		bool leaveZone = s.zones[i].first < 0;
-
-		if(leaveZone && (!cons.acceptable() || !p.overall.acceptable())) {
+		if(sstate.leaveZone && (!cons.acceptable() || !p.overall.acceptable())) {
 			// Not enough edits to make this path non-redundant with
 			// other seeds
 			p.step = -1; // invalidate, same as marking it done
