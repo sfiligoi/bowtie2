@@ -1947,18 +1947,19 @@ MultiSeedAligner::searchSeedBi(
 
 	bool done = true;
 
-	for(auto ppel : ppv) {
+	for (size_t n=0; n<nels; n++) {
+		MultiSeedAlignerSearchParams &p = *(ppv[n]);
 		bool my_oom = false;
-		bool my_done = ppel->al.startSearchSeedBi(
+		bool my_done = p.al.startSearchSeedBi(
 				depth,
-				*ppel,
+				p,
 				my_oom);
 		if(my_done) {
 			if (my_oom) {
 				return false;
 			}
 			// only >=0 steps are valid, so make it invalid
-			ppel->step = -1;
+			p.step = -1;
 		}
 		done &= my_done;
 	}
