@@ -2257,7 +2257,7 @@ MultiSeedAligner::searchSeedBi(std::vector< SeedAligner* > &palv) {
 	for(auto pal : palv) {
 		const InstantiatedSeed* s = pal->s_;
 		assert_gt(s.steps.size(), 0);
-		__builtin_prefetch(&(s.steps[0]));
+		__builtin_prefetch(&(s->steps[0]));
 		ppv.emplace_back(*pal, s->cons[0], s->cons[1], s->cons[2], s->overall);
 	}
 	return searchSeedBi(0, ppv);
