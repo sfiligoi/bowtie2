@@ -1787,17 +1787,16 @@ public:
 	int off;
 	bool ltr;
 public:
-	void setOff(
-		size_t _off,
+	int setOff(
+		int _off,
 		const BwtTopBot &bwt,      // The 4 BWT idxs
 		const Ebwt* ebwtFw_,       // forward index (BWT)
 		const Ebwt* ebwtBw_)       // backward/mirror index (BWT')
 	{
-		off = _off;
-		ltr = off > 0;
+		bool iltr = _off > 0;
 		t[0] = t[1] = t[2] = t[3] = b[0] = b[1] = b[2] = b[3] = 0;
-		off = abs(off)-1;
-		if(ltr) {
+		int ioff = abs(_off)-1;
+		if(iltr) {
 			ebwt = ebwtBw_;
 			tp[0] = tp[1] = tp[2] = tp[3] = bwt.topf;
 			bp[0] = bp[1] = bp[2] = bp[3] = bwt.botf;
@@ -1813,6 +1812,9 @@ public:
 			ntop = bwt.topf;
 		}
 		assert(ebwt != NULL);
+		off = ioff;
+		ltr = iltr;
+		return ioff;
 	}
 
 public:
@@ -2020,6 +2022,11 @@ MultiSeedAligner::searchSeedBi(
 		if(ssteps>max_step) max_step=ssteps;
 
 		sstate.initLastTot(p.bwt.botf - p.bwt.topf);
+
+		__builtin_prefetch(&(s.steps[p.step]));
+		__builtin_prefetch(&(s.zones[p.step]));
+		__builtin_prefetch(&p.tloc);
+		__builtin_prefetch(&p.bloc);
 	}
 	for(size_t i = min_step; i < max_step; i++) {
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
@@ -2033,16 +2040,18 @@ MultiSeedAligner::searchSeedBi(
 		assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
 		assert(p.al.ebwtBw_ == NULL || p.bwt.botf-p.bwt.topf == p.bwt.botb-p.bwt.topb);
 		assert(p.tloc.valid());
-		sstate.setOff(s.steps[i], p.bwt, p.al.ebwtFw_, p.al.ebwtBw_);
-		__builtin_prefetch(&((*p.al.seq_)[sstate.off]));
-		__builtin_prefetch(&((*p.al.qual_)[sstate.off]));
+		int off = sstate.setOff(s.steps[i], p.bwt, p.al.ebwtFw_, p.al.ebwtBw_);
+		__builtin_prefetch(&((*p.al.seq_)[off]));
+		__builtin_prefetch(&(s.steps[i])+1); // recursion may need it at this round
+		__builtin_prefetch(&((*p.al.qual_)[off]));
+		__builtin_prefetch(&(s.zones[i]));
 	   }
 
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
 		MultiSeedAlignerSearchParams &p = ppv[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
 		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
-		MultiSeedAlignerSearchState& sstate = sstatev[n];
 
 		if(p.bloc.valid()) {
 			// Range delimited by tloc/bloc has size >1.  If size == 1,
@@ -2058,11 +2067,12 @@ MultiSeedAligner::searchSeedBi(
 		}
 
 		int c = (*p.al.seq_)[sstate.off];  assert_range(0, 4, c);
+		int zone = s.zones[i].first;
+
 		sstate.c = c;
+		sstate.leaveZone = zone < 0;
 
-		sstate.leaveZone = s.zones[i].first < 0;
-
-		Constraint& cons    = p.cv[abs(s.zones[i].first)];
+		Constraint& cons    = p.cv[abs(zone)];
 		sstate.pcons = &cons;
 
 		sstate.bail = true;
@@ -2086,9 +2096,8 @@ MultiSeedAligner::searchSeedBi(
 	     MultiSeedAlignerVectorCleaner<size_t> recloop_cleaner(recloop);
 	     for (size_t n=0; n<nels; n++) { // first get recloop
 		MultiSeedAlignerSearchParams &p = ppv[n];
-		if(!p.isValid(i)) continue;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
-		if(!sstate.bail) {
+		if( p.isValid(i) && (!sstate.bail) ) {
 				int c = sstate.c;
 
 				Constraint& cons    = *sstate.pcons;
@@ -2158,10 +2167,14 @@ MultiSeedAligner::searchSeedBi(
 
 	   for (size_t n=0; n<nels; n++) { // OK to iterate, could be parallel, too
 		MultiSeedAlignerSearchParams &p = ppv[n];
-		if(!p.isValid(i)) continue;
-		const InstantiatedSeed& s = *p.al.s_;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
+		if(!p.isValid(i)) continue;
+
+                __builtin_prefetch(&p.tloc);
+                __builtin_prefetch(&p.bloc);
+
 		Constraint& cons    = *sstate.pcons;
+		const InstantiatedSeed& s = *p.al.s_;
 
 		if(!sstate.bail) {
 				if(cons.canGap() && p.overall.canGap()) {
@@ -2243,6 +2256,8 @@ MultiSeedAligner::searchSeedBi(std::vector< SeedAligner* > &palv) {
 	ppv.reserve(palv.size());
 	for(auto pal : palv) {
 		const InstantiatedSeed* s = pal->s_;
+		assert_gt(s.steps.size(), 0);
+		__builtin_prefetch(&(s.steps[0]));
 		ppv.emplace_back(*pal, s->cons[0], s->cons[1], s->cons[2], s->overall);
 	}
 	return searchSeedBi(0, ppv);
