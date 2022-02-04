@@ -1662,15 +1662,14 @@ public:
 		const Constraint &_c0,        // constraints to enforce in seed zone 0
 		const Constraint &_c1,        // constraints to enforce in seed zone 1
 		const Constraint &_c2,        // constraints to enforce in seed zone 2
-		const Constraint &_overall,   // overall constraints to enforce
-		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+		const Constraint &_overall)   // overall constraints to enforce
 	: step(0)
 	, bwt()
 	, tloc()
 	, bloc()
 	, cv{ _c0, _c1, _c2 }
 	, overall(_overall)
-	, prevEdit(_prevEdit)
+	, prevEdit(NULL)
 	{}
 
 	void checkCV() const {
@@ -1938,9 +1937,8 @@ public:
 		const Constraint &_c0,        // constraints to enforce in seed zone 0
 		const Constraint &_c1,        // constraints to enforce in seed zone 1
 		const Constraint &_c2,        // constraints to enforce in seed zone 2
-		const Constraint &_overall,   // overall constraints to enforce
-		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
-	: SeedAlignerSearchParams(_c0, _c1, _c2, _overall, _prevEdit)
+		const Constraint &_overall)   // overall constraints to enforce
+	: SeedAlignerSearchParams(_c0, _c1, _c2, _overall)
 	, al(_al)
 	, done(false)
 	{}
@@ -1969,14 +1967,14 @@ public:
 bool
 MultiSeedAligner::searchSeedBi(
 	int depth,            // recursion depth
-	std::vector< MultiSeedAlignerSearchParams* > &ppv)
+	std::vector<MultiSeedAlignerSearchParams> &ppv)
 {
 	const size_t nels = ppv.size();
 
 	bool done = true;
 
 	for (size_t n=0; n<nels; n++) {
-		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		MultiSeedAlignerSearchParams &p = ppv[n];
 		bool my_oom = false;
 		bool my_done = p.al.startSearchSeedBi(
 				depth,
@@ -1999,19 +1997,18 @@ MultiSeedAligner::searchSeedBi(
 
 	// temp vectors used in the loop
 	// pre-allocate here to minimize overhead later
-	std::vector< std::shared_ptr<SeedAlignerSearchSave> > savev;
+	std::vector<SeedAlignerSearchSave> savev;
 	std::vector<size_t> recloop;
-	std::vector< std::shared_ptr<SeedAlignerSearchRecState> > rstatev_save;
-	std::vector< std::shared_ptr<MultiSeedAlignerSearchParams> > p2v_save;
-	std::vector<MultiSeedAlignerSearchParams*> p2v;
+	std::vector<SeedAlignerSearchRecState> rstatev_save;
+	std::vector<MultiSeedAlignerSearchParams> p2v;
 	savev.reserve(nels); recloop.reserve(nels);
 	rstatev_save.reserve(nels);
-	p2v_save.reserve(nels); p2v.reserve(nels);
+	p2v.reserve(nels);
 
 	size_t min_step=INT_MAX;
 	size_t max_step=0;
 	for (size_t n=0; n<nels; n++) {
-		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		MultiSeedAlignerSearchParams &p = ppv[n];
 		if (p.done) continue; // invalid => done
 
 		const InstantiatedSeed& s = *p.al.s_;
@@ -2026,7 +2023,7 @@ MultiSeedAligner::searchSeedBi(
 	}
 	for(size_t i = min_step; i < max_step; i++) {
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
-		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		MultiSeedAlignerSearchParams &p = ppv[n];
 		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
@@ -2042,7 +2039,7 @@ MultiSeedAligner::searchSeedBi(
 	   }
 
 	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
-		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		MultiSeedAlignerSearchParams &p = ppv[n];
 		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
@@ -2085,10 +2082,10 @@ MultiSeedAligner::searchSeedBi(
 		}
 	   } // for n
 	   {
-	     MultiSeedAlignerVectorCleaner< std::shared_ptr<SeedAlignerSearchSave> > savev_clener(savev);
-	     MultiSeedAlignerVectorCleaner< size_t > recloop_cleaner(recloop);
+	     MultiSeedAlignerVectorCleaner<SeedAlignerSearchSave> savev_clener(savev);
+	     MultiSeedAlignerVectorCleaner<size_t> recloop_cleaner(recloop);
 	     for (size_t n=0; n<nels; n++) { // first get recloop
-		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		MultiSeedAlignerSearchParams &p = ppv[n];
 		if(!p.isValid(i)) continue;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
 		if(!sstate.bail) {
@@ -2098,8 +2095,7 @@ MultiSeedAligner::searchSeedBi(
 
 				int q = (*p.al.qual_)[sstate.off];
 				if((cons.canMismatch(q, *p.al.sc_) && p.overall.canMismatch(q, *p.al.sc_)) || c == 4) {
-					SeedAlignerSearchSave* psave = new SeedAlignerSearchSave(cons, p.overall, p.tloc, p.bloc);
-					savev.push_back( std::shared_ptr<SeedAlignerSearchSave>(psave) );
+					savev.emplace_back(cons, p.overall, p.tloc, p.bloc);
 
 					if(c != 4) {
 						cons.chargeMismatch(q, *p.al.sc_);
@@ -2117,34 +2113,31 @@ MultiSeedAligner::searchSeedBi(
 	     } // for n
 	     const size_t nrlels = recloop.size();
 	     for(int j = 0; j < 4; j++) { // must be executed in order
-		MultiSeedAlignerVectorCleaner< std::shared_ptr<SeedAlignerSearchRecState> > rstatev_save_cleaner(rstatev_save);
-		MultiSeedAlignerVectorCleaner< std::shared_ptr<MultiSeedAlignerSearchParams> > p2v_save_cleaner(p2v_save);
-		MultiSeedAlignerVectorCleaner< MultiSeedAlignerSearchParams* > p2v_cleaner(p2v);
+		MultiSeedAlignerVectorCleaner<SeedAlignerSearchRecState> rstatev_save_cleaner(rstatev_save);
+		MultiSeedAlignerVectorCleaner<MultiSeedAlignerSearchParams> p2v_cleaner(p2v);
 		for (size_t ni=0; ni<nrlels; ni++) { // build p2v
 			const size_t n=recloop[ni];
-			MultiSeedAlignerSearchParams &p = *(ppv[n]);
+			MultiSeedAlignerSearchParams &p = ppv[n];
 			MultiSeedAlignerSearchState& sstate = sstatev[n];
 
 			int c = sstate.c;
 			if(j == c || sstate.b[j] == sstate.t[j]) continue;
 
 			// Potential mismatch
-			SeedAlignerSearchRecState* prstate = new SeedAlignerSearchRecState(j, c, sstate, p.prevEdit);
-			rstatev_save.push_back(std::shared_ptr<SeedAlignerSearchRecState>(prstate));
+			rstatev_save.emplace_back(j, c, sstate, p.prevEdit);
+			SeedAlignerSearchRecState& rstate = rstatev_save.back();
 
-			p.al.nextLocsBi(p.tloc, p.bloc, prstate->bwt, i+1);
+			p.al.nextLocsBi(p.tloc, p.bloc, rstate.bwt, i+1);
 			p.al.bwedits_++;
-			MultiSeedAlignerSearchParams* p2 = new MultiSeedAlignerSearchParams(
+			p2v.emplace_back(
 				p.al,              // SeedAligner object associated with params
 				i+1,               // depth into steps_[] array
-				prstate->bwt,      // The 4 BWT idxs
+				rstate.bwt,      // The 4 BWT idxs
 				p.tloc,            // locus for top (perhaps unititialized)
 				p.bloc,            // locus for bot (perhaps unititialized)
 				p.cv,              // constraints to enforce in seed zones
 				p.overall,         // overall constraints to enforce
-				&prstate->editl);  // latest edit
-			p2v.push_back(p2);
-			p2v_save.push_back(std::shared_ptr<MultiSeedAlignerSearchParams>(p2) );
+				&rstate.editl);  // latest edit
 		} // for ni
 		if(p2v.size()>0) {
 			// recurse all of the p2v elements at once
@@ -2164,7 +2157,7 @@ MultiSeedAligner::searchSeedBi(
 	   } // end savev and recloop scope
 
 	   for (size_t n=0; n<nels; n++) { // OK to iterate, could be parallel, too
-		MultiSeedAlignerSearchParams &p = *(ppv[n]);
+		MultiSeedAlignerSearchParams &p = ppv[n];
 		if(!p.isValid(i)) continue;
 		const InstantiatedSeed& s = *p.al.s_;
 		MultiSeedAlignerSearchState& sstate = sstatev[n];
@@ -2238,24 +2231,19 @@ MultiSeedAligner::searchSeedBi(
  */
 bool
 SeedAligner::searchSeedBi() {
-	MultiSeedAlignerSearchParams p(*this, s_->cons[0], s_->cons[1], s_->cons[2], s_->overall, NULL);
-	std::vector< MultiSeedAlignerSearchParams* > ppv(1, &p);
+	std::vector<MultiSeedAlignerSearchParams> ppv;
+	ppv.emplace_back(*this, s_->cons[0], s_->cons[1], s_->cons[2], s_->overall);
 	return MultiSeedAligner::searchSeedBi(0, ppv);
 }
 
 // MultiSeedAligner version of the initial invocation
 bool
 MultiSeedAligner::searchSeedBi(std::vector< SeedAligner* > &palv) {
-	// use a self-cleaning version for ease of use
-	std::vector< std::shared_ptr<MultiSeedAlignerSearchParams> > ppv_save;
-	// but pass the unmanaged vector to the outside
-	std::vector< MultiSeedAlignerSearchParams* > ppv;
-	ppv_save.reserve(palv.size()); ppv.reserve(palv.size());
+	std::vector<MultiSeedAlignerSearchParams> ppv;
+	ppv.reserve(palv.size());
 	for(auto pal : palv) {
 		const InstantiatedSeed* s = pal->s_;
-		MultiSeedAlignerSearchParams* p = new MultiSeedAlignerSearchParams(*pal, s->cons[0], s->cons[1], s->cons[2], s->overall, NULL);
-		ppv.push_back( p );
-		ppv_save.push_back( std::shared_ptr<MultiSeedAlignerSearchParams>( p ) );
+		ppv.emplace_back(*pal, s->cons[0], s->cons[1], s->cons[2], s->overall);
 	}
 	return searchSeedBi(0, ppv);
 }

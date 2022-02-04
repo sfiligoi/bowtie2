@@ -1720,7 +1720,7 @@ protected:
 	 */
 	static bool searchSeedBi(
 		int depth,             // recursion depth
-		std::vector< MultiSeedAlignerSearchParams* > &ppv); // all the remaining params
+		std::vector<MultiSeedAlignerSearchParams> &ppv); // all the remaining params
 
 };
 
