@@ -25,6 +25,26 @@
 using namespace std;
 
 /**
+ * Helper class to mimic in-scope vector
+ * Will make sure the vector is empty at the beginning and at the end
+ */
+template<typename T>
+class MultiSeedAlignerVectorCleaner {
+public:
+	MultiSeedAlignerVectorCleaner(std::vector<T>& vec) noexcept
+	: vec_(vec)
+	{
+		vec_.clear();
+	}
+
+	~MultiSeedAlignerVectorCleaner() noexcept {
+		vec_.clear();
+	}
+private:
+	std::vector<T>& vec_;
+};
+
+/**
  * Construct a constraint with no edits of any kind allowed.
  */
 Constraint Constraint::exact() {
@@ -1976,9 +1996,20 @@ MultiSeedAligner::searchSeedBi(
 	}
 
 	std::vector<MultiSeedAlignerSearchState> sstatev(nels);
+
+	// temp vectors used in the loop
+	// pre-allocate here to minimize overhead later
+	std::vector< std::shared_ptr<SeedAlignerSearchSave> > savev;
+	std::vector<size_t> recloop;
+	std::vector< std::shared_ptr<SeedAlignerSearchRecState> > rstatev_save;
+	std::vector< std::shared_ptr<MultiSeedAlignerSearchParams> > p2v_save;
+	std::vector<MultiSeedAlignerSearchParams*> p2v;
+	savev.reserve(nels); recloop.reserve(nels);
+	rstatev_save.reserve(nels);
+	p2v_save.reserve(nels); p2v.reserve(nels);
+
 	size_t min_step=INT_MAX;
 	size_t max_step=0;
-
 	for (size_t n=0; n<nels; n++) {
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
 		if (p.done) continue; // invalid => done
@@ -2054,9 +2085,8 @@ MultiSeedAligner::searchSeedBi(
 		}
 	   } // for n
 	   {
-	     std::vector< std::shared_ptr<SeedAlignerSearchSave> > savev;
-	     std::vector<size_t> recloop;
-	     savev.reserve(nels); recloop.reserve(nels);
+	     MultiSeedAlignerVectorCleaner< std::shared_ptr<SeedAlignerSearchSave> > savev_clener(savev);
+	     MultiSeedAlignerVectorCleaner< size_t > recloop_cleaner(recloop);
 	     for (size_t n=0; n<nels; n++) { // first get recloop
 		MultiSeedAlignerSearchParams &p = *(ppv[n]);
 		if(!p.isValid(i)) continue;
@@ -2087,11 +2117,9 @@ MultiSeedAligner::searchSeedBi(
 	     } // for n
 	     const size_t nrlels = recloop.size();
 	     for(int j = 0; j < 4; j++) { // must be executed in order
-		std::vector< std::shared_ptr<SeedAlignerSearchRecState> > rstatev_save;
-		std::vector< std::shared_ptr<MultiSeedAlignerSearchParams> > p2v_save;
-		std::vector<MultiSeedAlignerSearchParams*> p2v;
-		rstatev_save.reserve(nrlels);
-		p2v_save.reserve(nrlels); p2v.reserve(nrlels);
+		MultiSeedAlignerVectorCleaner< std::shared_ptr<SeedAlignerSearchRecState> > rstatev_save_cleaner(rstatev_save);
+		MultiSeedAlignerVectorCleaner< std::shared_ptr<MultiSeedAlignerSearchParams> > p2v_save_cleaner(p2v_save);
+		MultiSeedAlignerVectorCleaner< MultiSeedAlignerSearchParams* > p2v_cleaner(p2v);
 		for (size_t ni=0; ni<nrlels; ni++) { // build p2v
 			const size_t n=recloop[ni];
 			MultiSeedAlignerSearchParams &p = *(ppv[n]);
