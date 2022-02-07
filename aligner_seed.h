@@ -367,6 +367,20 @@ struct Seed {
 	}
 
 	/**
+	 * Prepare the buffers for instantiate
+	 */
+	static void prepare(
+		int len,
+                const Read& read,
+                InstantiatedSeed& is);
+
+	void prepare(
+		const Read& read,
+		InstantiatedSeed& is) const {
+		prepare(len,read,is);
+	}
+
+	/**
 	 * Given a read, depth and orientation, extract a seed data structure
 	 * from the read and fill in the steps & zones arrays.  The Seed
 	 * contains the sequence and quality values.
@@ -1695,6 +1709,29 @@ class MultiSeedAligner {
 
 public:
 
+	/**
+	 * Iterate through the seeds that cover the read and initiate a
+	 * search for each seed.
+	 */
+	static std::vector<std::pair<int, int> > instantiateSeeds(
+		std::vector< SeedAligner* > &palv,                  // seed aligners
+		const std::vector< const EList<Seed>* > &pseedsv,   // search seeds
+		const std::vector<size_t> offv,                     // offset into read to start extracting
+		const std::vector< int> & perv,                     // interval between seeds
+		const std::vector< const Read* > &preadv,           // read to align
+		const Scoring& pens,                                // scoring scheme
+		const std::vector<bool> &nofwv,                     // don't align forward read
+		const std::vector<bool> &norcv,                     // don't align revcomp read
+		std::vector< AlignmentCacheIface* >& pcachev,       // holds some seed hits from previous reads
+		std::vector< SeedResults* > & psrv,                 // holds all the seed hits
+		std::vector< SeedSearchMetrics* > & pmetv,          // metrics
+		std::vector< std::pair<int, int> >& instFwv,
+		std::vector< std::pair<int, int> >& instRcv);
+
+	/**
+	 * Iterate through the seeds that cover the read and initiate a
+	 * search for each seed.
+	 */
 	static void searchAllSeeds(
 		std::vector< SeedAligner* > &palv,             // seed aligners
 		const std::vector< const EList<Seed>* > &pseedsv,    // search seeds

@@ -99,6 +99,24 @@ Constraint Constraint::editBased(int edits) {
 // Some static methods for constructing some standard SeedPolicies
 //
 
+void
+Seed::prepare(
+	int len,
+	const Read& read,
+	InstantiatedSeed& is)
+{
+	int seedlen = len;
+	if((int)read.length() < seedlen) {
+		// Shrink seed length to fit read if necessary
+		seedlen = (int)read.length();
+	}
+	assert_gt(seedlen, 0);
+	is.steps.reserveExact(seedlen);
+	is.zones.reserveExact(seedlen);
+	is.steps.prefetch(0);
+	is.zones.prefetch(0);
+}
+
 /**
  * Given a read, depth and orientation, extract a seed data structure
  * from the read and fill in the steps & zones arrays.  The Seed
@@ -478,6 +496,155 @@ pair<int, int> SeedAligner::instantiateSeeds(
 		}
 	}
 	return ret;
+}
+
+std::vector<std::pair<int, int> >
+MultiSeedAligner::instantiateSeeds(
+		std::vector< SeedAligner* > &palv,                  // seed aligners
+                const std::vector< const EList<Seed>* > &pseedsv,   // search seeds
+                const std::vector<size_t> offv,                     // offset into read to start extracting
+                const std::vector< int> & perv,                     // interval between seeds
+                const std::vector< const Read* > &preadv,           // read to align
+                const Scoring& pens,                                // scoring scheme
+                const std::vector<bool> &nofwv,                     // don't align forward read
+                const std::vector<bool> &norcv,                     // don't align revcomp read
+                std::vector< AlignmentCacheIface* >& pcachev,       // holds some seed hits from previous reads
+                std::vector< SeedResults* > & psrv,                 // holds all the seed hits
+                std::vector< SeedSearchMetrics* > & pmetv,          // metrics
+                std::vector< std::pair<int, int> >& instFwv,
+                std::vector< std::pair<int, int> >& instRcv) {
+	const size_t nels = palv.size();
+	std::vector<std::pair<int, int> > retv(nels);
+	std::vector<int> nseedsv(nels);
+
+	assert_eq(palvs.size(), pseedsv.size())
+	assert_eq(pseedsv.size(), perv.size())
+	assert_eq(perv.size(), preadv.size());
+	assert_eq(preadv.size(), nofwv.size());
+	assert_eq(nofwv.size(), norcv.size());
+	assert_eq(norcv.size(), pcachev.size());
+	assert_eq(pcachev.size(), psrv.size());
+	assert_eq(psrv.size(), pmetv.size());
+	assert_eq(pmetv.size(), instFwv.size());
+	assert_eq(instFwv.size(), instRcv.size());
+
+	for (size_t n=0; n<nels; n++) {
+		SeedAligner &al = *(palv[n]);
+		const EList<Seed> &seeds = *(pseedsv[n]);
+		const Read &read = *(preadv[n]);
+		SeedResults &sr = *(psrv[n]);
+
+		assert(!seeds.empty());
+		assert_gt(read.length(), 0);
+
+		// Check whether read has too many Ns
+		al.offIdx2off_.clear();
+		const size_t sseeds = seeds.size();
+		const int off = offv[n];
+
+		int len = seeds[0].len; // assume they're all the same length
+#ifndef NDEBUG
+		for(size_t i = 1; i < sseeds; i++) {
+			assert_eq(len, seeds[i].len);
+		}
+#endif
+		// Calc # seeds within read interval
+		const int per = perv[n];
+		int nseeds = 1;
+		if((int)read.length() - (int)off > len) {
+			nseeds += ((int)read.length() - (int)off - len) / per;
+		}
+		for(int i = 0; i < nseeds; i++) {
+			al.offIdx2off_.push_back(per * i + (int)off);
+		}
+		retv[n].first = 0;  // # seeds that require alignment
+		retv[n].second = 0; // # seeds that hit in cache with non-empty results
+		sr.reset(read, al.offIdx2off_, nseeds);
+		assert(sr.repOk(&pcachev[n]->current(), true)); // require that SeedResult be initialized
+		nseedsv[n] = nseeds;
+
+		// pre-heat InstantiatedSeeds
+		for(int fwi = 0; fwi < 2; fwi++) {
+			bool fw = (fwi == 0);
+			if((fw && nofwv[n]) || (!fw && norcv[n])) continue;
+			for(int i = 0; i < nseeds; i++) {
+				EList<InstantiatedSeed>& iss = sr.instantiatedSeeds(fw, i);
+				iss.resize(sseeds);
+				for(size_t j = 0; j < sseeds; j++) {
+					Seed::prepare(len, read, iss[j]);
+				}
+				// the elements are not really valid, so set pointer back to 0
+				iss.clear();
+			}
+
+		}
+	}
+	// For each seed position
+	for(int fwi = 0; fwi < 2; fwi++) {
+	   bool fw = (fwi == 0);
+
+	   for (size_t n=0; n<nels; n++) {
+		if((fw && nofwv[n]) || (!fw && norcv[n])) {
+			// Skip this orientation b/c user specified --nofw or --norc
+			continue;
+		}
+
+		SeedAligner &al = *(palv[n]);
+		const EList<Seed> &seeds = *(pseedsv[n]);
+		const Read &read = *(preadv[n]);
+		SeedResults &sr = *(psrv[n]);
+		const int nseeds = nseedsv[n];
+		const int off = offv[n];
+
+		EList<BTDnaString>& seqs = sr.seqs(fw);
+		EList<BTString>& quals   = sr.quals(fw);
+
+		// For each seed position
+		for(int i = 0; i < nseeds; i++) {
+			int depth = i * perv[n] + (int)off;
+			int seedlen = seeds[0].len;
+			// Extract the seed sequence at this offset
+			// If fw == true, we extract the characters from i*per to
+			// i*(per-1) (exclusive).  If fw == false,
+			al.instantiateSeq(
+				read,
+				seqs[i],
+				quals[i],
+				std::min<int>((int)seedlen, (int)read.length()),
+				depth,
+				fw);
+			QKey qk(seqs[i] ASSERT_ONLY(, tmpdnastr_));
+			// For each search strategy
+			EList<InstantiatedSeed>& iss = sr.instantiatedSeeds(fw, i);
+			for(int j = 0; j < (int)seeds.size(); j++) {
+				iss.expand();
+				assert_eq(seedlen, seeds[j].len);
+				InstantiatedSeed* is = &iss.back();
+				if(seeds[j].instantiate(
+					read,
+					seqs[i],
+					quals[i],
+					pens,
+					depth,
+					i,
+					j,
+					fw,
+					*is))
+				{
+					// Can we fill this seed hit in from the cache?
+					retv[n].first++;
+					if(fwi == 0) { instFwv[n].first++; } else { instRcv[n].first++; }
+				} else {
+					// Seed may fail to instantiate if there are Ns
+					// that prevent it from matching
+					pmetv[n]->filteredseed++;
+					iss.pop_back();
+				}
+			} // for j
+		} // for i
+	   } // for n
+	} // for fwi
+	return retv;
 }
 
 // Update metrics as part of searchAllSeeds

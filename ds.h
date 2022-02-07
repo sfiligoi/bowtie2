@@ -744,6 +744,15 @@ public:
 	}
 
 	/**
+	 * Prefetch the specified element.
+	 * It is valid to pre-fetch past the end, if within capacity
+	 */
+	inline void prefetch(size_t i) const {
+		assert_lt(i, sz_);
+		__builtin_prefetch(&(list_[i]));
+	}
+
+	/**
 	 * Return a reference to the ith element.
 	 */
 	inline T& operator[](size_t i) {
