@@ -4311,27 +4311,27 @@ static void multiseedSearchWorker(void *vp) {
 						auto  psdmv   = mmstatev.psdmv(idxs);
 
 						const size_t nels = palv.size();
-						vector< std::pair<int, int> > instv, instFwv, instRcv;
-						instv.resize(nels);
+						vector<size_t> offsetv(nels);
+						for (size_t i=0; i<nels; i++) offsetv[i] = (intervalv[i] * roundi) / nroundsv[i];
+
+						vector< std::pair<int, int> > instFwv, instRcv;
 						instFwv.resize(nels);
 						instRcv.resize(nels);
-						for (size_t i=0; i<nels; i++) {
-								// Instantiate the seeds
-								size_t offset = (intervalv[i] * roundi) / nroundsv[i];
-								instv[i] = palv[i]->instantiateSeeds(
-									*(pseedsv[i]),   // search seeds
-									offset,         // offset to begin extracting
-									intervalv[i], // interval between seeds
-									*(prdsv[i]),     // read to align
-									sc,             // scoring scheme
-									nofwv[i],     // don't align forward read
-									norcv[i],     // don't align revcomp read
-									*(pcav[i]),             // holds some seed hits from previous reads
-									*(pshsv[i]),      // holds all the seed hits
-									*(psdmv[i]),            // metrics
-									instFwv[i],  // OUT
-									instRcv[i]); // OUT
-						}
+						vector< std::pair<int, int> > instv = MultiSeedAligner::instantiateSeeds(
+									palv,
+									pseedsv,     // search seeds
+									offsetv,     // offset to begin extracting
+									intervalv,   // interval between seeds
+									prdsv,       // read to align
+									sc,          // scoring scheme
+									nofwv,       // don't align forward read
+									norcv,       // don't align revcomp read
+									pcav,        // holds some seed hits from previous reads
+									pshsv,       // holds all the seed hits
+									psdmv,       // metrics
+									instFwv,     // OUT
+									instRcv);    // OUT
+
 						for (size_t i=0; i<nels; i++) {
 								assert(pshsv[i]->repOk(&pcav[i]->current()));
 								if(instv[i].first + instv[i].second == 0) {
