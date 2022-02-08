@@ -4524,35 +4524,26 @@ static void multiseedSearchWorker(void *vp) {
 							assert_leq(rstate.prm.nUgFail,  rstate.streak[i]);
 							assert_leq(rstate.prm.nEeFail,  rstate.streak[i]);
 						}
+			} // for active_rstatev
 
-				// Commit and report paired-end/unpaired alignments
-				//uint32_t sd = rstate.rds(0).seed ^ rstate.rds(1).seed;
-				//rstate.rnd.init(ROTL(sd, 20));
-				rstate.msinkwrap.finishRead(
-					&rstate.shs[0],              // seed results for mate 1
-					&rstate.shs[1],              // seed results for mate 2
-					rstate.exhaustive[0],        // exhausted seed hits for mate 1?
-					rstate.exhaustive[1],        // exhausted seed hits for mate 2?
-					rstate.nfilt[0],
-					rstate.nfilt[1],
-					rstate.scfilt[0],
-					rstate.scfilt[1],
-					rstate.lenfilt[0],
-					rstate.lenfilt[1],
-					rstate.qcfilt[0],
-					rstate.qcfilt[1],
-					rstate.rnd,                  // pseudo-random generator
-					rstate.rpm,                  // reporting metrics
-					rstate.prm,                  // per-read metrics
+			// Commit and report paired-end/unpaired alignments
+			//uint32_t sd = rstate.rds(0).seed ^ rstate.rds(1).seed;
+			//rstate.rnd.init(ROTL(sd, 20));
+			{
+				MultiAlnSinkWrap::ReadStateVectorInstance<shared_ptr<ReadState> > active_mrstatev(active_rstatev);
+				// run all of them together to minimize locking overhead
+				MultiAlnSinkWrap::finishRead(
+					active_mrstatev,
 					sc,                   // scoring scheme
 					!seedSumm,            // suppress seed summaries?
 					seedSumm,             // suppress alignments?
 					scUnMapped,           // Consider soft-clipped bases unmapped when calculating TLEN
 					xeq);
-				assert(rstate.msinkwrap.empty());
-			} // for active_rstatev
+			} // end scope for active_mrstatev
+
 		for (auto & prstate : active_rstatev) {
 			ReadState &rstate = *prstate;
+			assert(rstate.msinkwrap.empty());
 			rstate.per_read_metrics();
 		}
 	} // while(true)

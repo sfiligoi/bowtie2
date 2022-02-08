@@ -28,6 +28,7 @@
 #include "simple_func.h"
 #include "outq.h"
 #include <utility>
+#include <vector>
 
 // Forward decl
 class SeedResults;
@@ -1188,6 +1189,7 @@ public:
 		return best2Pair_;
 	}
 
+	friend class MultiAlnSinkWrap;
 protected:
 
 	/**
@@ -1345,6 +1347,40 @@ public:
 		{}
 
 	};
+
+	// mimic basic vector interface
+	class ReadStateVector {
+	public:
+		virtual size_t size() const =0;
+		virtual ReadState* operator[](size_t i) = 0;
+		virtual const ReadState* operator[](size_t i) const = 0;
+	};
+
+	template<class T> // T must be a derivative of ReadState*
+	class ReadStateVectorInstance : public ReadStateVector {
+	protected:
+		std::vector<T>& vec;
+	public:
+		ReadStateVectorInstance(std::vector<T>& _vec) : vec(_vec) {}
+
+		size_t size() const { return vec.size();}
+		ReadState* operator[](size_t i) {return &(*vec[i]);}
+		const ReadState* operator[](size_t i) const {return &(*vec[i]);}
+	};
+
+	/**
+	 * Inform global, shared AlnSink object that we're finished with
+	 * this read.  The global AlnSink is responsible for updating
+	 * counters, creating the output record, and delivering the record
+	 * to the appropriate output stream.
+	 */
+	static void finishRead(
+		ReadStateVector &prstatev,
+		const Scoring& sc,              // scoring scheme
+		bool suppressSeedSummary = true,
+		bool suppressAlignments = false,
+		bool scUnMapped = false,
+		bool xeq = false);
 
 };
 

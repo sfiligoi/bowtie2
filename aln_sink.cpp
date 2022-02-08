@@ -1382,6 +1382,41 @@ void AlnSinkWrap::finishRead(
 	return;
 }
 
+void MultiAlnSinkWrap::finishRead(
+	ReadStateVector &prstatev,
+	const Scoring& sc,              // scoring scheme
+	bool suppressSeedSummary,
+	bool suppressAlignments,
+	bool scUnMapped,
+	bool xeq) {
+	const size_t nels = prstatev.size();
+
+	for (size_t n=0; n<nels; n++) {
+		ReadState& rstate = *(prstatev[n]);
+		rstate.msinkwrap.finishRead(
+			&rstate.shs[0],              // seed results for mate 1
+			&rstate.shs[1],              // seed results for mate 2
+			rstate.exhaustive[0],        // exhausted seed hits for mate 1?
+			rstate.exhaustive[1],        // exhausted seed hits for mate 2?
+			rstate.nfilt[0],
+			rstate.nfilt[1],
+			rstate.scfilt[0],
+			rstate.scfilt[1],
+			rstate.lenfilt[0],
+			rstate.lenfilt[1],
+			rstate.qcfilt[0],
+			rstate.qcfilt[1],
+			rstate.rnd,                  // pseudo-random generator
+			rstate.rpm,                  // reporting metrics
+			rstate.prm,                  // per-read metrics
+			sc,                   // scoring scheme
+			suppressSeedSummary,
+			suppressAlignments,
+			scUnMapped,
+			xeq);
+	}
+}
+
 /**
  * Called by the aligner when a new unpaired or paired alignment is
  * discovered in the given stage.  This function checks whether the
