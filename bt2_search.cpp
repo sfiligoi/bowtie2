@@ -2964,19 +2964,12 @@ public:
 	}
 };
 
-class ReadState {
-private:
-	const int tid;
-
+class ReadState : public MultiAlnSinkWrap::ReadState {
+protected:
 	// Thread-local cache for seed alignments
 	PtrWrap<AlignmentCache> scLocal;
 	// Thread-local cache for current seed alignments
 	AlignmentCache scCurrent;
-
-	// Instantiate an object for holding reporting-related parameters.
-	ReportingParams rp;
-	// Instantiate a mapping quality calculator
-	unique_ptr<Mapq> bmapq;
 
 	EList<Seed> seeds1, seeds2;
 
@@ -2995,16 +2988,6 @@ public:
 	TAlScore minsc[2];
 	// Keep track of whether mates 1/2 were filtered out last time through
 	bool filt[2];
-	// Keep track of whether mates 1/2 were filtered out due Ns last time
-	bool nfilt[2];
-	// Keep track of whether mates 1/2 were filtered out due to not having
-	// enough characters to rise about the score threshold.
-	bool scfilt[2];
-	// Keep track of whether mates 1/2 were filtered out due to not having
-	// more characters than the number of mismatches permitted in a seed.
-	bool lenfilt[2];
-	// Keep track of whether mates 1/2 were filtered out by upstream qc
-	bool qcfilt[2];
 
 	size_t minedfw[2];
 	size_t minedrc[2];
@@ -3021,9 +3004,6 @@ public:
 	size_t mxIter[2];
 	// Calculate # seed rounds for each mate
 	size_t nrounds[2];
-
-	// Keep track of whether last search was exhaustive for mates 1 and 2
-	bool exhaustive[2];
 
 	bool   done[2];
 	size_t nelt[2];
@@ -3046,7 +3026,6 @@ public:
 	SeedSearchMetrics sdm;
 	WalkMetrics wlm;
 	SwMetrics swmSeed, swmMate;
-	ReportingMetrics rpm;
 	SSEMetrics sseU8ExtendMet;
 	SSEMetrics sseU8MateMet;
 	SSEMetrics sseI16ExtendMet;
@@ -3057,30 +3036,25 @@ public:
 	// Interfaces for alignment and seed caches
 	AlignmentCacheIface ca;
 
-	// Make a per-thread wrapper for the global MHitSink object.
-	AlnSinkWrap msinkwrap;
-
-	RandomSource rnd;
-
 	SwDriver sd;
-	PerReadMetrics prm;
-
-	SeedResults shs[2];
-
 public:
 	ReadState(int _tid, PatternSourcePerThreadFactory& patsrcFact,
 		  ofstream *dpLog, ofstream *dpLogOpp)
-	: tid(_tid)
-	, scLocal()
-	, scCurrent(seedCacheCurrentMB * 1024 * 1024, false)
-	, rp(
+	: MultiAlnSinkWrap::ReadState(
+			_tid,
                         (allHits ? std::numeric_limits<THitInt>::max() : khits), // -k
                         mhits,             // -m/-M
                         0,                 // penalty gap (not used now)
                         msample,           // true -> -M was specified, otherwise assume -m
                         gReportDiscordant, // report discordang paired-end alignments?
-                        gReportMixed)     // report unpaired alignments for paired reads?
-	, bmapq(new_mapq(mapqv, scoreMin, *multiseed_sc))
+                        gReportMixed,     // report unpaired alignments for paired reads?
+			mapqv,
+			scoreMin,
+			*multiseed_sc,
+			*multiseed_msink,
+			new SeedResults[2])
+	, scLocal()
+	, scCurrent(seedCacheCurrentMB * 1024 * 1024, false)
 	, seeds1(), seeds2()
 	, mergei(0)
 	, iTime(time(0))
@@ -3090,10 +3064,6 @@ public:
 	, psdone(false)
 	, minsc{ std::numeric_limits<TAlScore>::max(), std::numeric_limits<TAlScore>::max() }
 	, filt{ true, true }
-	, nfilt{ true, true }
-	, scfilt{ true, true }
-	, lenfilt{ true, true }
-	, qcfilt{ true, true }
 	, minedfw{ 0, 0 }
 	, minedrc{ 0, 0 }
 	, nofw{ false, false }
@@ -3106,7 +3076,6 @@ public:
 	, mxUg{     maxUg,         maxUg       }
 	, mxIter{   maxIters,      maxIters    }
 	, nrounds{ nSeedRounds, nSeedRounds }
-	, exhaustive{ false, false }
 	, done{ false, false}
 	, nelt{ 0, 0}
 	, matemap{ 0, 1 }
@@ -3125,7 +3094,6 @@ public:
 	, wlm()
 	, swmSeed()
 	, swmMate()
-	, rpm()
 	, sseU8ExtendMet()
 	, sseU8MateMet()
 	, sseI16ExtendMet()
@@ -3135,15 +3103,13 @@ public:
 	, ca( &scCurrent,
 	      init_and_get_scLocal(scLocal).get(),
 	      msNoCache ? NULL : multiseed_ca)
-	, msinkwrap(*multiseed_msink,  // global sink
-                    rp,                // reporting parameters
-                    *bmapq,            // MAPQ calculator
-                    (size_t)tid)      // thread id
-	, rnd()
 	, sd(exactCacheCurrentMB * 1024 * 1024)
-	, prm()
-	// default initializer for shs is OK
 	{}
+
+	~ReadState() {
+		delete[] shs;
+		shs=NULL;
+	}
 
 	// const by default
         const EList<Seed>& seeds(int idx) const { return (idx==0) ? seeds1 : seeds2; }

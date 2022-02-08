@@ -1283,6 +1283,71 @@ protected:
 	StackedAln staln_;
 };
 
+class MultiAlnSinkWrap {
+public:
+	class ReadState {
+	protected:
+		const int tid;
+		// Instantiate an object for holding reporting-related parameters.
+		ReportingParams rp;
+		// Instantiate a mapping quality calculator
+		unique_ptr<Mapq> bmapq;
+
+	public:
+
+		// Keep track of whether mates 1/2 were filtered out due Ns last time
+		bool nfilt[2];
+		// Keep track of whether mates 1/2 were filtered out due to not having
+		// enough characters to rise about the score threshold.
+		bool scfilt[2];
+		// Keep track of whether mates 1/2 were filtered out due to not having
+		// more characters than the number of mismatches permitted in a seed.
+		bool lenfilt[2];
+		// Keep track of whether mates 1/2 were filtered out by upstream qc
+		bool qcfilt[2];
+
+		// Keep track of whether last search was exhaustive for mates 1 and 2
+		bool exhaustive[2];
+
+		AlnSinkWrap msinkwrap;
+
+		ReportingMetrics rpm;
+		RandomSource rnd;
+		PerReadMetrics prm;
+
+		SeedResults *shs; // expect it to be size==2
+
+		ReadState(int _tid,
+			THitInt khits,
+			THitInt mhits,
+			THitInt pengap,
+			bool msample,
+			bool discord,
+			bool mixed,
+			int mapqv,
+			const SimpleFunc& scoreMin,
+			const Scoring& sc,
+			AlnSink& g,                // AlnSink being wrapped
+			SeedResults* _shs)
+		: tid(_tid)
+		, rp(khits, mhits, pengap, msample, discord, mixed)
+		, bmapq(new_mapq(mapqv, scoreMin, sc))
+		, nfilt{ true, true }
+		, scfilt{ true, true }
+		, lenfilt{ true, true }
+		, qcfilt{ true, true }
+		, exhaustive{ false, false }
+		, msinkwrap(g, rp, *bmapq, (size_t)tid)
+		, rpm()
+		, rnd()
+		, prm()
+		, shs(_shs)
+		{}
+
+	};
+
+};
+
 /**
  * An AlnSink concrete subclass for printing SAM alignments.  The user might
  * want to customize SAM output in various ways.  We encapsulate all these
