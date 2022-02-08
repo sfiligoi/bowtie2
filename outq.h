@@ -27,6 +27,7 @@
 #include "threading.h"
 #include "mem_ids.h"
 #include <vector>
+#include <memory>
 
 /**
  * Encapsulates a list of lines of output.  If the earliest as-yet-unreported
@@ -92,12 +93,12 @@ public:
 	 * Caller is telling us that they're about to write output record(s) for
 	 * the read with the given id.
 	 */
-	void beginRead(TReadId rdid, size_t threadId);
+	void beginRead(TReadId rdid, size_t threadId, bool withoutLocking=false);
 
 	/**
 	 * Writer is finished writing to
 	 */
-	void finishRead(const BTString& rec, TReadId rdid, size_t threadId);
+	void finishRead(const BTString& rec, TReadId rdid, size_t threadId, bool withoutLocking=false);
 
 	/**
 	 * Return the number of records currently being buffered.
@@ -132,6 +133,19 @@ public:
 	 */
 	void flush(bool force = false, bool getLock = true);
 
+
+	/**
+	 * Acquire lock, if in threadSafe mode;
+	 * Will be unlocked once the returned object is destroyed
+	 * (no-op if not in threadSafe mode)
+	 */
+	std::unique_ptr<ThreadSafe> lock() {
+		if(threadSafe_) {
+			return std::unique_ptr<ThreadSafe>(new ThreadSafe(mutex_m));
+		} else {
+			return std::unique_ptr<ThreadSafe>();
+		}
+	}
 protected:
 
 	OutFileBuf&     obuf_;
@@ -182,6 +196,41 @@ protected:
 	OutputQueue& q_;
 	const BTString& rec_;
 	TReadId rdid_;
+	size_t threadId_;
+};
+
+class MultiOutputQueueMark {
+public:
+	MultiOutputQueueMark(
+		OutputQueue& q,
+		const std::vector<const BTString* >& precv,
+		std::vector<TReadId* >& prdidv,
+		size_t threadId) :
+		q_(q),
+		precv_(precv),
+		prdidv_(prdidv),
+		threadId_(threadId)
+	{
+		std::unique_ptr<ThreadSafe> lock = q_.lock();
+		const size_t nels = prdidv.size();
+		assert_eq(precv.size(), nels);
+		for(size_t n=0; n<nels; n++) {
+			q_.beginRead(*(prdidv[n]), threadId, true);
+		}
+	}
+
+	~MultiOutputQueueMark() {
+		std::unique_ptr<ThreadSafe> lock = q_.lock();
+		const size_t nels = prdidv_.size();
+		for(size_t n=0; n<nels; n++) {
+			q_.finishRead(*(precv_[n]), *(prdidv_[n]), threadId_, true);
+		}
+	}
+
+protected:
+	OutputQueue& q_;
+	const std::vector<const BTString* >& precv_;
+	std::vector<TReadId* >& prdidv_;
 	size_t threadId_;
 };
 

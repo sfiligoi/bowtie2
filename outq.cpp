@@ -46,8 +46,8 @@ void OutputQueue::beginReadImpl(TReadId rdid, size_t threadId) {
 	}
 }
 
-void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
-	if(reorder_ && threadSafe_) {
+void OutputQueue::beginRead(TReadId rdid, size_t threadId, bool withoutLocking) {
+	if(reorder_ && threadSafe_ && (!withoutLocking) ) {
 		ThreadSafe ts(mutex_m);
 		beginReadImpl(rdid, threadId);
 	} else {
@@ -84,9 +84,9 @@ void OutputQueue::finishReadImpl(const BTString& rec, TReadId rdid, size_t threa
 	}
 }
 
-void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId) {
+void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId, bool withoutLocking) {
 	if(reorder_ || perThreadCounter[threadId] >= perThreadBufSize_) {
-		if(threadSafe_) {
+		if(threadSafe_ && (!withoutLocking)) {
 			ThreadSafe ts(mutex_m);
 			finishReadImpl(rec, rdid, threadId);
 		} else {

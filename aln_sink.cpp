@@ -640,7 +640,7 @@ int AlnSinkWrap::nextRead(
  *  uint64_t max_concord; // # pairs maxed out
  *  uint64_t unal_pair;   // # pairs where neither mate aligned
  */
-void AlnSinkWrap::finishRead(
+inline void AlnSinkWrap::finishReadImplement(
 	const SeedResults *sr1,         // seed alignment results for mate 1
 	const SeedResults *sr2,         // seed alignment results for mate 2
 	bool               exhaust1,    // mate 1 exhausted?
@@ -662,8 +662,6 @@ void AlnSinkWrap::finishRead(
 	bool scUnMapped,                // = false
 	bool xeq)                       // = false
 {
-	obuf_.clear();
-	OutputQueueMark qqm(g_.outq(), obuf_, rdid_, threadid_);
 	assert(init_);
 	if(!suppressSeedSummary) {
 		if(sr1 != NULL) {
@@ -1382,6 +1380,43 @@ void AlnSinkWrap::finishRead(
 	return;
 }
 
+void AlnSinkWrap::finishRead(
+	const SeedResults *sr1,         // seed alignment results for mate 1
+	const SeedResults *sr2,         // seed alignment results for mate 2
+	bool               exhaust1,    // mate 1 exhausted?
+	bool               exhaust2,    // mate 2 exhausted?
+	bool               nfilt1,      // mate 1 N-filtered?
+	bool               nfilt2,      // mate 2 N-filtered?
+	bool               scfilt1,     // mate 1 score-filtered?
+	bool               scfilt2,     // mate 2 score-filtered?
+	bool               lenfilt1,    // mate 1 length-filtered?
+	bool               lenfilt2,    // mate 2 length-filtered?
+	bool               qcfilt1,     // mate 1 qc-filtered?
+	bool               qcfilt2,     // mate 2 qc-filtered?
+	RandomSource&      rnd,         // pseudo-random generator
+	ReportingMetrics&  met,         // reporting metrics
+	const PerReadMetrics& prm,      // per-read metrics
+	const Scoring& sc,              // scoring scheme
+	bool suppressSeedSummary,       // = true
+	bool suppressAlignments,        // = false
+	bool scUnMapped,                // = false
+	bool xeq)                       // = false
+{
+	obuf_.clear();
+	OutputQueueMark qqm(g_.outq(), obuf_, rdid_, threadid_);
+	finishReadImplement(
+		sr1, sr2,
+		exhaust1, exhaust2,
+		nfilt1, nfilt2,
+		scfilt1, scfilt2,
+		lenfilt1, lenfilt2,
+		qcfilt1, qcfilt2,
+		rnd, met, prm,
+		sc,
+		suppressSeedSummary, suppressAlignments,
+		scUnMapped, xeq);
+}
+
 void MultiAlnSinkWrap::finishRead(
 	ReadStateVector &prstatev,
 	const Scoring& sc,              // scoring scheme
@@ -1390,10 +1425,28 @@ void MultiAlnSinkWrap::finishRead(
 	bool scUnMapped,
 	bool xeq) {
 	const size_t nels = prstatev.size();
+	if(nels==0) return; //nothing to do
 
+	OutputQueue* pq = &(prstatev[0]->msinkwrap.g_.outq());
+	const size_t threadid = prstatev[0]->msinkwrap.threadid_;
+
+	std::vector<const BTString* > precv;
+	std::vector<TReadId* > prdidv;
+	precv.reserve(nels);
+	prdidv.reserve(nels);
 	for (size_t n=0; n<nels; n++) {
 		ReadState& rstate = *(prstatev[n]);
-		rstate.msinkwrap.finishRead(
+		rstate.msinkwrap.obuf_.clear();
+		assert_eq(&(rstate.msinkwrap.g_.outq()), pq);
+		precv.push_back(&rstate.msinkwrap.obuf_);
+		prdidv.push_back(&rstate.msinkwrap.rdid_);
+		assert_eq(rstate.msinkwrap.threadid_, threadid);
+	}
+
+	MultiOutputQueueMark qqm(*pq, precv, prdidv, threadid);
+	for (size_t n=0; n<nels; n++) {
+		ReadState& rstate = *(prstatev[n]);
+		rstate.msinkwrap.finishReadImplement(
 			&rstate.shs[0],              // seed results for mate 1
 			&rstate.shs[1],              // seed results for mate 2
 			rstate.exhaustive[0],        // exhausted seed hits for mate 1?

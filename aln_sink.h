@@ -1193,6 +1193,36 @@ public:
 protected:
 
 	/**
+	 * Inform global, shared AlnSink object that we're finished with
+	 * this read.  The global AlnSink is responsible for updating
+	 * counters, creating the output record, and delivering the record
+	 * to the appropriate output stream.
+	 *
+	 * Will not completely finalize, to be called by finishRead.
+	 */
+	void finishReadImplement(
+		const SeedResults *sr1,         // seed alignment results for mate 1
+		const SeedResults *sr2,         // seed alignment results for mate 2
+		bool               exhaust1,    // mate 1 exhausted?
+		bool               exhaust2,    // mate 2 exhausted?
+		bool               nfilt1,      // mate 1 N-filtered?
+		bool               nfilt2,      // mate 2 N-filtered?
+		bool               scfilt1,     // mate 1 score-filtered?
+		bool               scfilt2,     // mate 2 score-filtered?
+		bool               lenfilt1,    // mate 1 length-filtered?
+		bool               lenfilt2,    // mate 2 length-filtered?
+		bool               qcfilt1,     // mate 1 qc-filtered?
+		bool               qcfilt2,     // mate 2 qc-filtered?
+		RandomSource&      rnd,         // pseudo-random generator
+		ReportingMetrics&  met,         // reporting metrics
+		const PerReadMetrics& prm,      // per-read metrics
+		const Scoring& sc,              // scoring scheme
+		bool suppressSeedSummary = true,
+		bool suppressAlignments = false,
+		bool scUnMapped = false,
+		bool xeq = false);
+
+	/**
 	 * Return true iff the read in rd1/rd2 matches the last read handled, which
 	 * should still be in rd1_/rd2_.
 	 */
