@@ -23,7 +23,6 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <future>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -630,7 +629,7 @@ public:
 	 * Open a new output stream to a file with given name.
 	 */
 	OutFileBuf(const std::string& out, bool binary = false) :
-		name_(out.c_str()), cur_(0), buf_(buf1_), closed_(false)
+		name_(out.c_str()), cur_(0), closed_(false)
 	{
 		out_ = fopen(out.c_str(), binary ? "wb" : "w");
 		if(out_ == NULL) {
@@ -645,7 +644,7 @@ public:
 	 * Open a new output stream to a file with given name.
 	 */
 	OutFileBuf(const char *out, bool binary = false) :
-		name_(out), cur_(0), buf_(buf1_), closed_(false)
+		name_(out), cur_(0), closed_(false)
 	{
 		assert(out != NULL);
 		out_ = fopen(out, binary ? "wb" : "w");
@@ -658,7 +657,7 @@ public:
 	/**
 	 * Open a new output stream to standard out.
 	 */
-	OutFileBuf() : name_("cout"), cur_(0), buf_(buf1_), closed_(false) {
+	OutFileBuf() : name_("cout"), cur_(0), closed_(false) {
 		out_ = stdout;
 	}
 	
@@ -778,11 +777,6 @@ public:
 	void close() {
 		if(closed_) return;
 		if(cur_ > 0) flush();
-		if(async_.valid()) {
-			// outstanding async write going on
-			// wait for it to complete
-			async_.get();
-		}
 		closed_ = true;
 		if(out_ != stdout) {
 			fclose(out_);
@@ -798,16 +792,14 @@ public:
 	}
 
 	void flush() {
-		if(async_.valid()) {
-			// outstanding async write going on
-			// wait for it to complete
-			async_.get();
+		if(cur_ != fwrite((const void *)buf_, 1, cur_, out_)) {
+			if (errno == EPIPE) {
+				exit(EXIT_SUCCESS);
+			}
+			std::cerr << "Error while flushing and closing output" << std::endl;
+			throw 1;
 		}
-
-		async_ = std::async(flushAsync, (const void *)buf_, cur_, out_);
 		cur_ = 0;
-		// switch to the other buffer
-		buf_ = (buf_==buf1_) ? buf2_ : buf1_;
 	}
 
 	/**
@@ -826,26 +818,13 @@ public:
 
 private:
 
-	static void flushAsync(const void * buf_, size_t cur_, FILE *out_) {
-		if(cur_ != fwrite(buf_, 1, cur_, out_)) {
-			if (errno == EPIPE) {
-				exit(EXIT_SUCCESS);
-			}
-			std::cerr << "Error while flushing and closing output" << std::endl;
-			throw 1;
-		}
-	}
-
 	static const size_t BUF_SZ = 16 * 1024;
 
 	const char *name_;
 	FILE       *out_;
 	size_t      cur_;
-	char*       buf_; // points to one of the two buffers below
+	char        buf_[BUF_SZ]; // (large) input buffer
 	bool        closed_;
-	std::future<void> async_;   // used for async flush
-	char        buf1_[BUF_SZ]; // (large) output buffer
-	char        buf2_[BUF_SZ]; // (large) output buffer
 };
 
 #endif /*ndef FILEBUF_H_*/
