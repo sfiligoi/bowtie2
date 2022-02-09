@@ -876,14 +876,14 @@ private:
 
 		// returns abort
 		bool writeComplete() {
-			bool out;
+			bool ret;
 			{
 				std::lock_guard<std::mutex> lk(m);
 				buf = NULL;
-				out = abort;
+				ret = abort;
 			}
 			cv.notify_all();
-			return out;
+			return ret;
 		}
 
 
@@ -893,7 +893,7 @@ private:
 	static void writeAsync(AsyncData *asyncDataPtr) {
 		AsyncData &asyncData = *asyncDataPtr;
 		bool abort = false;
-		while(abort) {
+		while(!abort) {
 			abort = asyncData.waitForBuf();
 			if(abort) break;
 			if(asyncData.cur != fwrite((const void *)asyncData.buf, 1, asyncData.cur, asyncData.out)) {
