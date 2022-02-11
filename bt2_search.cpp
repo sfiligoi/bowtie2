@@ -3425,10 +3425,30 @@ public:
 public:
 	MultiMateReadMultiState() {}
 
+	void clear() {
+		prstatev.clear();
+		matecv.clear();
+		matemapv.clear();
+		// no need to clear the cache buffers
+	}
+
 	void reserve(size_t size) {
 		prstatev.reserve(size);
 		matecv.reserve(size);
 		matemapv.reserve(2*size);
+
+		nofwv_.reserve(size);
+		norcv_.reserve(size);
+		nceilv_.reserve(size);
+		intervalv_.reserve(size);
+		nroundsv_.reserve(size);
+		palv_.reserve(size);
+		psdmv_.reserve(size);
+		pcav_.reserve(size);
+		pseedsv_.reserve(size);
+		prdsv_.reserve(size);
+		pshsv_.reserve(size);
+		pprmv_.reserve(size);
 	}
 
 	template<typename T>
@@ -3659,11 +3679,24 @@ static void multiseedSearchWorker(void *vp) {
 
 		const size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 
+		// define the big buffer at "global" level, since we have many loop iterations
+		vector< shared_ptr<ReadState> > active_rstatev;
+		MultiMateReadMultiState mmstatev;
+		vector<size_t> offsetv;
+		vector< std::pair<int, int> > instFwv, instRcv;
+		active_rstatev.reserve(states_per_worker);
+		mmstatev.reserve(states_per_worker);
+		offsetv.reserve(states_per_worker);
+		instFwv.reserve(states_per_worker);
+		instRcv.reserve(states_per_worker);
+
+		vector< size_t > process_mates;
+		process_mates.reserve(2);
+
 		rndArb.init((uint32_t)time(0));
 		while(!rstatev_all_done(rstatev)) {
 		  uint32_t nstates = rstatev.size();
-		  vector< shared_ptr<ReadState> > active_rstatev; //NOTE: Elements can be processed in any order
-		  active_rstatev.reserve(nstates);
+		  active_rstatev.clear(); //NOTE: Elements can be processed in any order
 		  {
 		    uint32_t i=0;
 		    // try to read nps values... if case of soft error, retry
@@ -4173,13 +4206,11 @@ static void multiseedSearchWorker(void *vp) {
 						rstate.reset_seed_counts();
 			} // for active_rstatev
 			for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
-				MultiMateReadMultiState mmstatev;
-				mmstatev.reserve(active_rstatev.size());
+				mmstatev.clear();
 				for (auto & prstate : active_rstatev) {
 					ReadState &rstate = *prstate;
 					bool paired = rstate.rds_paired();
-					vector< size_t > process_mates;
-					process_mates.reserve(2);
+					process_mates.clear();
 
 							rstate.ca.nextRead(); // Clear cache in preparation for new search
 							rstate.shs[0].clearSeeds();
@@ -4248,10 +4279,9 @@ static void multiseedSearchWorker(void *vp) {
 						auto&  psdmv   = mmstatev.psdmv(idxs);
 
 						const size_t nels = palv.size();
-						vector<size_t> offsetv(nels);
-						for (size_t i=0; i<nels; i++) offsetv[i] = (intervalv[i] * roundi) / nroundsv[i];
+						offsetv.clear();
+						for (size_t i=0; i<nels; i++) offsetv.push_back( (intervalv[i] * roundi) / nroundsv[i] );
 
-						vector< std::pair<int, int> > instFwv, instRcv;
 						instFwv.resize(nels);
 						instRcv.resize(nels);
 						vector< std::pair<int, int> > instv = MultiSeedAligner::instantiateSeeds(
