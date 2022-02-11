@@ -140,7 +140,7 @@ public:
 	 * (no-op if not in threadSafe mode)
 	 */
 	std::unique_ptr<ThreadSafe> lock() {
-		if(threadSafe_) {
+		if(reorder_ && threadSafe_) {
 			return std::unique_ptr<ThreadSafe>(new ThreadSafe(mutex_m));
 		} else {
 			return std::unique_ptr<ThreadSafe>();
