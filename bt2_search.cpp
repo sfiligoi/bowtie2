@@ -3480,74 +3480,45 @@ public:
 		return out;
 	}
 
+	vector<bool>&   nofwv(    const MateIdxs& idxs) { return get_idxs_vector(nofwv_, &MultiMateReadMultiState::get_nofw, idxs);}
+	vector<bool>&   norcv(    const MateIdxs& idxs) { return get_idxs_vector(norcv_, &MultiMateReadMultiState::get_norc, idxs);}
+	vector<int>&    nceilv(   const MateIdxs& idxs) { return get_idxs_vector(nceilv_, &MultiMateReadMultiState::get_nceil, idxs);}
+	vector<int>&    intervalv(const MateIdxs& idxs) { return get_idxs_vector(intervalv_, &MultiMateReadMultiState::get_interval, idxs);}
+	vector<size_t>& nroundsv( const MateIdxs& idxs) { return get_idxs_vector(nroundsv_, &MultiMateReadMultiState::get_nrounds, idxs);}
 
-	vector<bool>   nofwv(    uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_nofw, matei);}
-	vector<bool>   norcv(    uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_norc, matei);}
-	vector<int>    nceilv(   uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_nceil, matei);}
-	vector<int>    intervalv(uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_interval, matei);}
-	vector<size_t> nroundsv( uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_nrounds, matei);}
+	vector< SeedAligner * >&         palv( const MateIdxs& idxs) { return get_idxs_vector(palv_, &MultiMateReadMultiState::get_pal, idxs);}
+	vector< SeedSearchMetrics * >&   psdmv(const MateIdxs& idxs) { return get_idxs_vector(psdmv_, &MultiMateReadMultiState::get_psdm, idxs);}
+	vector< AlignmentCacheIface * >& pcav( const MateIdxs& idxs) { return get_idxs_vector(pcav_, &MultiMateReadMultiState::get_pca, idxs);}
 
-	vector< SeedAligner * >         palv( uint8_t matei) { return get_mate_vector(&MultiMateReadMultiState::get_pal, matei);}
-	vector< SeedSearchMetrics * >   psdmv(uint8_t matei) { return get_mate_vector(&MultiMateReadMultiState::get_psdm, matei);}
-	vector< AlignmentCacheIface * > pcav( uint8_t matei) { return get_mate_vector(&MultiMateReadMultiState::get_pca, matei);}
-
-	vector< const EList<Seed> * > pseedvs(uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_pseeds, matei);}
-	vector< const Read * >        prdsv(  uint8_t matei) const { return get_mate_vector(&MultiMateReadMultiState::get_prds, matei);}
-	vector< SeedResults * >       pshsv(  uint8_t matei)       { return get_mate_vector(&MultiMateReadMultiState::get_pshs, matei);}
-	vector< PerReadMetrics * >    pprmv(  uint8_t matei)       { return get_mate_vector(&MultiMateReadMultiState::get_pprm, matei);}
-
-
-	vector<bool>   nofwv(    const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_nofw, idxs);}
-	vector<bool>   norcv(    const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_norc, idxs);}
-	vector<int>    nceilv(   const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_nceil, idxs);}
-	vector<int>    intervalv(const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_interval, idxs);}
-	vector<size_t> nroundsv( const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_nrounds, idxs);}
-
-	vector< SeedAligner * >         palv( const MateIdxs& idxs) { return get_idxs_vector(&MultiMateReadMultiState::get_pal, idxs);}
-	vector< SeedSearchMetrics * >   psdmv(const MateIdxs& idxs) { return get_idxs_vector(&MultiMateReadMultiState::get_psdm, idxs);}
-	vector< AlignmentCacheIface * > pcav( const MateIdxs& idxs) { return get_idxs_vector(&MultiMateReadMultiState::get_pca, idxs);}
-
-	vector< const EList<Seed> * > pseedsv(const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_pseeds, idxs);}
-	vector< const Read * >        prdsv(  const MateIdxs& idxs) const { return get_idxs_vector(&MultiMateReadMultiState::get_prds, idxs);}
-	vector< SeedResults * >       pshsv(  const MateIdxs& idxs)       { return get_idxs_vector(&MultiMateReadMultiState::get_pshs, idxs);}
-        vector< PerReadMetrics * >    pprmv(  const MateIdxs& idxs)       { return get_idxs_vector(&MultiMateReadMultiState::get_pprm, idxs);}
+	vector< const EList<Seed> * >& pseedsv(const MateIdxs& idxs) { return get_idxs_vector(pseedsv_, &MultiMateReadMultiState::get_pseeds, idxs);}
+	vector< const Read * >&        prdsv(  const MateIdxs& idxs) { return get_idxs_vector(prdsv_, &MultiMateReadMultiState::get_prds, idxs);}
+	vector< SeedResults * >&       pshsv(  const MateIdxs& idxs) { return get_idxs_vector(pshsv_, &MultiMateReadMultiState::get_pshs, idxs);}
+        vector< PerReadMetrics * >&    pprmv(  const MateIdxs& idxs) { return get_idxs_vector(pprmv_, &MultiMateReadMultiState::get_pprm, idxs);}
 
 private:
-	template<typename T>
-	vector< T > get_mate_vector(T (*valfunc)(ReadState *prstate, uint8_t mate), uint8_t matei) {
-		vector< T > out;
-		const size_t nrs = prstatev.size();
-		out.reserve(nrs);
-		for (size_t i=0; i<nrs; i++) {
-			uint8_t mc = matecv[i];
-			assert_gt(3, mc);
-			if (mc>matei) {
-				out.push_back( (*valfunc)(prstatev[i],matemapv[2*i+matei]) );
-			}
-		}
-		return out;
-	}
+	// we will reuse the same buffers, to minimize re-allocations and maximize locality
+	vector<bool>   nofwv_;
+	vector<bool>   norcv_;
+	vector<int>    nceilv_;
+	vector<int>    intervalv_;
+	vector<size_t> nroundsv_;
+
+	vector< SeedAligner * >         palv_;
+	vector< SeedSearchMetrics * >   psdmv_;
+	vector< AlignmentCacheIface * > pcav_;
+
+	vector< const EList<Seed> * > pseedsv_;
+	vector< const Read * >        prdsv_;
+	vector< SeedResults * >       pshsv_;
+        vector< PerReadMetrics * >    pprmv_;
+
+
 
 	template<typename T>
-	vector< T > get_mate_vector(T (*valfunc)(const ReadState *prstate, uint8_t mate), uint8_t matei) const {
-		vector< T > out;
-		const size_t nrs = prstatev.size();
-		out.reserve(nrs);
-		for (size_t i=0; i<nrs; i++) {
-			uint8_t mc = matecv[i];
-			assert_gt(3, mc);
-			if (mc>matei) {
-				out.push_back( (*valfunc)(prstatev[i],matemapv[2*i+matei]) );
-			}
-		}
-		return out;
-	}
-
-	template<typename T>
-	vector< T > get_idxs_vector(T (*valfunc)(ReadState *prstate, uint8_t mate), const MateIdxs& idxs) {
-		vector< T > out;
+	vector< T >& get_idxs_vector(vector< T > &out, T (*valfunc)(ReadState *prstate, uint8_t mate), const MateIdxs& idxs) {
 		const uint8_t matei = idxs.matei;
 		const size_t nrs = idxs.idxs.size();
+		out.clear();
 		out.reserve(nrs);
 		for (size_t i=0; i<nrs; i++) {
 			size_t idx = idxs.idxs[i];
@@ -3557,10 +3528,10 @@ private:
 	}
 
 	template<typename T>
-	vector< T > get_idxs_vector(T (*valfunc)(const ReadState *prstate, uint8_t mate), const MateIdxs& idxs) const {
-		vector< T > out;
+	vector< T >& get_idxs_vector(vector< T > &out, T (*valfunc)(const ReadState *prstate, uint8_t mate), const MateIdxs& idxs) const {
 		const uint8_t matei = idxs.matei;
 		const size_t nrs = idxs.idxs.size();
+		out.clear();
 		out.reserve(nrs);
 		for (size_t i=0; i<nrs; i++) {
 			size_t idx = idxs.idxs[i];
@@ -4265,16 +4236,16 @@ static void multiseedSearchWorker(void *vp) {
 					{
 						const MultiMateReadMultiState::MateIdxs idxs = mmstatev.get_idxs(matei);
 
-						const vector<int>    intervalv = mmstatev.intervalv(idxs);
-						const vector<size_t> nroundsv  = mmstatev.nroundsv(idxs);
-						const vector<bool>   nofwv     = mmstatev.nofwv(idxs);
-						const vector<bool>   norcv     = mmstatev.norcv(idxs);
-						auto  palv    = mmstatev.palv(idxs);
-						auto  pseedsv = mmstatev.pseedsv(idxs);
-						auto  prdsv   = mmstatev.prdsv(idxs);
-						auto  pcav    = mmstatev.pcav(idxs);
-						auto  pshsv   = mmstatev.pshsv(idxs);
-						auto  psdmv   = mmstatev.psdmv(idxs);
+						const vector<int>&    intervalv = mmstatev.intervalv(idxs);
+						const vector<size_t>& nroundsv  = mmstatev.nroundsv(idxs);
+						const vector<bool>&   nofwv     = mmstatev.nofwv(idxs);
+						const vector<bool>&   norcv     = mmstatev.norcv(idxs);
+						auto&  palv    = mmstatev.palv(idxs);
+						auto&  pseedsv = mmstatev.pseedsv(idxs);
+						auto&  prdsv   = mmstatev.prdsv(idxs);
+						auto&  pcav    = mmstatev.pcav(idxs);
+						auto&  pshsv   = mmstatev.pshsv(idxs);
+						auto&  psdmv   = mmstatev.psdmv(idxs);
 
 						const size_t nels = palv.size();
 						vector<size_t> offsetv(nels);
@@ -4313,13 +4284,13 @@ static void multiseedSearchWorker(void *vp) {
 					{
 						const MultiMateReadMultiState::MateIdxs idxs = mmstatev.get_idxs(matei);
 
-						auto  palv    = mmstatev.palv(idxs);
-						auto  pseedsv = mmstatev.pseedsv(idxs);
-						auto  prdsv   = mmstatev.prdsv(idxs);
-						auto  pcav    = mmstatev.pcav(idxs);
-						auto  pshsv   = mmstatev.pshsv(idxs);
-						auto  psdmv   = mmstatev.psdmv(idxs);
-						auto  pprmv   = mmstatev.pprmv(idxs);
+						auto&  palv    = mmstatev.palv(idxs);
+						auto&  pseedsv = mmstatev.pseedsv(idxs);
+						auto&  prdsv   = mmstatev.prdsv(idxs);
+						auto&  pcav    = mmstatev.pcav(idxs);
+						auto&  pshsv   = mmstatev.pshsv(idxs);
+						auto&  psdmv   = mmstatev.psdmv(idxs);
+						auto&  pprmv   = mmstatev.pprmv(idxs);
 
 						const size_t nels = palv.size();
 						// search all at once
