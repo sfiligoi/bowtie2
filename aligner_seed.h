@@ -627,17 +627,178 @@ struct EEHit {
 class SeedResults {
 
 public:
+	/**
+	 * Contains data for one direction
+	 */
+	class Direction {
+	public:
+		Direction(bool fw) :
+			fw_(fw),
+			seq_(AL_CAT),
+			qual_(AL_CAT),
+			hits_(AL_CAT),
+			is_(AL_CAT),
+			sorted_(AL_CAT)
+		{
+			clear();
+		}
+
+		/**
+		 * Clear buffered seed hits and state.  Set the number of seed
+		 * offsets and the read.
+		 */
+		void reset(size_t numOffs)
+		{
+			assert_gt(numOffs, 0);
+			clearSeeds();
+			seq_.resize(numOffs);
+			qual_.resize(numOffs);
+			hits_.resize(numOffs);
+			is_.resize(numOffs);
+			sorted_.resize(numOffs);
+			for(size_t i = 0; i < numOffs; i++) {
+				sorted_[i] = false;
+				hits_[i].reset();
+				is_[i].clear();
+			}
+		}
+
+		/**
+		 * Clear seed-hit state.
+		 */
+		void clearSeeds() {
+			sorted_.clear();
+			hits_.clear();
+			is_.clear();
+			seq_.clear();
+			uniTotS_ = 0;
+			repTotS_ = 0;
+			nonz_ = 0;
+			numRanges_ = 0;
+			numElts_ = 0;
+		}
+
+		/**
+		 * Clear seed-hit state and end-to-end alignment state.
+		 */
+		void clear() {
+			clearSeeds();
+			exactHit_.reset();
+		}
+
+		void add(
+			const QVal& qv,           // range of ranges in cache
+			uint32_t seedIdx)         // seed index (from 5' end)
+		{
+			assert(!hits_[seedIdx].valid());
+			hits_[seedIdx] = qv;
+			numElts_ += qv.numElts();
+			numRanges_ += qv.numRanges();
+			if(qv.numRanges() > 0) nonz_++;
+		}
+
+		/**
+		 * Return fraction of seeds that aligned uniquely on the given strand.
+		 */
+		size_t numUniqueSeedsStrand() const { return uniTotS_; }
+
+		/**
+		 * Return fraction of seeds that align repetitively.
+		 */
+		size_t numRepeatSeedsStrand() const { return repTotS_; }
+
+		/**
+		 * Get the QVal representing all the reference hits for the given
+		 * seed offset index.
+		 */
+		const QVal& hitsAtOffIdx(size_t seedoffidx) const {
+			return hits_[seedoffidx];
+		}
+
+		/**
+		 * Get the Instantiated seeds for the offset.
+		 */
+		EList<InstantiatedSeed>& instantiatedSeeds(size_t seedoffidx) {
+			return is_[seedoffidx];
+		}
+
+		/**
+		 * Return the number of ranges being held.
+		 */
+		size_t numRanges() const { return numRanges_; }
+
+		/**
+		 * Return the number of elements being held.
+		 */
+		size_t numElts() const { return numElts_; }
+
+		/**
+		 * Return the number of offsets into the read that have at
+		 * least one seed hit.
+		 */
+		size_t nonzeroOffsets() const {	return nonz_; }
+
+		/**
+		 * Return the list of extracted seed sequences for seeds on either
+		 * the forward or reverse strand.
+		 */
+		EList<BTDnaString>& seqs() { return seq_; }
+
+		/**
+		 * Return the list of extracted quality sequences for seeds on
+		 * either the forward or reverse strand.
+		 */
+		EList<BTString>& quals() { return qual_; }
+
+		/**
+		 * Return exact end-to-end alignment of fw read.
+		 */
+		EEHit exactEEHit() const { return exactHit_; }
+
+		/**
+		 * Is this a forward dirrection object?
+		 */
+		bool isFw() const {return fw_; }
+
+		/**
+		 * Clear out the end-to-end exact alignments.
+		 */
+		void clearExactE2eHits() {
+			exactHit_.reset();
+		}
+
+		/**
+		 * Return the number of distinct exact end-to-end hits found.
+		 */
+		size_t numExactE2eHits() const {
+			return exactHit_.size();
+		}
+
+		friend class SeedResults;
+	protected:
+
+		const bool          fw_;       // is this the forward direction?
+
+		// As seed hits and edits are added they're sorted into these
+		// containers
+		EList<BTDnaString>  seq_;       // seqs for seeds from read
+		EList<BTString>     qual_;      // quals for seeds from read
+		EList<QVal>         hits_;      // hits for read
+		EList<EList<InstantiatedSeed> > is_; // hits for read
+		EList<bool>         sorted_;    // true iff fw QVal was sorted/ranked
+		size_t              nonz_;      // # offsets into read with non-0 size
+		size_t              uniTotS_;   // # offsets unique hit on each strand
+		size_t              repTotS_;   // # offsets repetitive hit on each strand
+
+		size_t              numRanges_; // # ranges added for seeds
+		size_t              numElts_;   // # elements added for seeds
+
+		EEHit               exactHit_; // end-to-end exact hit for read
+	};
+
 	SeedResults() :
-		seqFw_(AL_CAT),
-		seqRc_(AL_CAT),
-		qualFw_(AL_CAT),
-		qualRc_(AL_CAT),
-		hitsFw_(AL_CAT),
-		hitsRc_(AL_CAT),
-		isFw_(AL_CAT),
-		isRc_(AL_CAT),
-		sortedFw_(AL_CAT),
-		sortedRc_(AL_CAT),
+		fw_(true),
+		rc_(false),
 		offIdx2off_(AL_CAT),
 		rankOffs_(AL_CAT),
 		rankFws_(AL_CAT),
@@ -645,7 +806,29 @@ public:
 	{
 		clear();
 	}
-	
+
+	/**
+	 * Get the forward or backward direction object
+	 */
+	Direction& getDirection(bool seedFw) {             // whether seed is from forward read
+		return seedFw ? fw_ : rc_;
+	}
+
+	const Direction& getDirection(bool seedFw) const { // whether seed is from forward read
+		return seedFw ? fw_ : rc_;
+	}
+
+	/**
+	 * Get the forward or backward direction object, based on rank
+	 */
+	Direction& getDirectionByRank(size_t r) {
+		return getDirection(rankFws_[r]);
+	}
+
+	const Direction& getDirectionByRank(size_t r) const {
+		return getDirection(rankFws_[r]);
+	}
+
 	/**
 	 * Set the current read.
 	 */
@@ -669,29 +852,18 @@ public:
 		assert_lt(seedIdx, hitsFw_.size());
 		assert_gt(numOffs_, 0); // if this fails, probably failed to call reset
 		if(qv.empty()) return;
-		if(seedFw) {
-			assert(!hitsFw_[seedIdx].valid());
-			hitsFw_[seedIdx] = qv;
-			numEltsFw_ += qv.numElts();
-			numRangesFw_ += qv.numRanges();
-			if(qv.numRanges() > 0) nonzFw_++;
-		} else {
-			assert(!hitsRc_[seedIdx].valid());
-			hitsRc_[seedIdx] = qv;
-			numEltsRc_ += qv.numElts();
-			numRangesRc_ += qv.numRanges();
-			if(qv.numRanges() > 0) nonzRc_++;
-		}
+		Direction &dir = getDirection(seedFw);
 		numElts_ += qv.numElts();
 		numRanges_ += qv.numRanges();
+		dir.add(qv, seedIdx);
 		if(qv.numRanges() > 0) {
 			nonzTot_++;
 			if(qv.numRanges() == 1 && qv.numElts() == 1) {
 				uniTot_++;
-				uniTotS_[seedFw ? 0 : 1]++;
+				dir.uniTotS_++;
 			} else {
 				repTot_++;
-				repTotS_[seedFw ? 0 : 1]++;
+				dir.repTotS_++;
 			}
 		}
 		assert(repOk(&ac));
@@ -709,24 +881,9 @@ public:
 		assert_gt(numOffs, 0);
 		clearSeeds();
 		numOffs_ = numOffs;
-		seqFw_.resize(numOffs_);
-		seqRc_.resize(numOffs_);
-		qualFw_.resize(numOffs_);
-		qualRc_.resize(numOffs_);
-		hitsFw_.resize(numOffs_);
-		hitsRc_.resize(numOffs_);
-		isFw_.resize(numOffs_);
-		isRc_.resize(numOffs_);
-		sortedFw_.resize(numOffs_);
-		sortedRc_.resize(numOffs_);
+		fw_.reset(numOffs_);
+		rc_.reset(numOffs_);
 		offIdx2off_ = offIdx2off;
-		for(size_t i = 0; i < numOffs_; i++) {
-			sortedFw_[i] = sortedRc_[i] = false;
-			hitsFw_[i].reset();
-			hitsRc_[i].reset();
-			isFw_[i].clear();
-			isRc_[i].clear();
-		}
 		read_ = &read;
 		sorted_ = false;
 	}
@@ -735,29 +892,17 @@ public:
 	 * Clear seed-hit state.
 	 */
 	void clearSeeds() {
-		sortedFw_.clear();
-		sortedRc_.clear();
+		fw_.clearSeeds();
+		rc_.clearSeeds();
 		rankOffs_.clear();
 		rankFws_.clear();
 		offIdx2off_.clear();
-		hitsFw_.clear();
-		hitsRc_.clear();
-		isFw_.clear();
-		isRc_.clear();
-		seqFw_.clear();
-		seqRc_.clear();
 		nonzTot_ = 0;
-		uniTot_ = uniTotS_[0] = uniTotS_[1] = 0;
-		repTot_ = repTotS_[0] = repTotS_[1] = 0;
-		nonzFw_ = 0;
-		nonzRc_ = 0;
+		uniTot_ = 0;
+		repTot_ = 0;
 		numOffs_ = 0;
 		numRanges_ = 0;
 		numElts_ = 0;
-		numRangesFw_ = 0;
-		numEltsFw_ = 0;
-		numRangesRc_ = 0;
-		numEltsRc_ = 0;
 	}
 	
 	/**
@@ -766,8 +911,8 @@ public:
 	void clear() {
 		clearSeeds();
 		read_ = NULL;
-		exactFwHit_.reset();
-		exactRcHit_.reset();
+		fw_.clear();
+		rc_.clear();
 		mm1Hit_.clear();
 		mm1Sorted_ = false;
 		mm1Elt_ = 0;
@@ -780,18 +925,18 @@ public:
 	void toSeedAlSumm(SeedAlSumm& ssum) const {
 		// Number of positions with at least 1 range
 		ssum.nonzTot   = nonzTot_;
-		ssum.nonzFw    = nonzFw_;
-		ssum.nonzRc    = nonzRc_;
+		ssum.nonzFw    = fw_.nonz_;
+		ssum.nonzRc    = rc_.nonz_;
 
 		// Number of ranges
 		ssum.nrangeTot = numRanges_;
-		ssum.nrangeFw  = numRangesFw_;
-		ssum.nrangeRc  = numRangesRc_;
+		ssum.nrangeFw  = fw_.numRanges_;
+		ssum.nrangeRc  = rc_.numRanges_;
 
 		// Number of elements
 		ssum.neltTot   = numElts_;
-		ssum.neltFw    = numEltsFw_;
-		ssum.neltRc    = numEltsRc_;
+		ssum.neltFw    = fw_.numElts_;
+		ssum.neltRc    = rc_.numElts_;
 		
 		// Other summaries
 		ssum.maxNonzRangeFw = ssum.minNonzRangeFw = 0;
@@ -799,32 +944,32 @@ public:
 		ssum.maxNonzEltFw = ssum.minNonzEltFw = 0;
 		ssum.maxNonzEltRc = ssum.minNonzEltRc = 0;
 		for(size_t i = 0; i < numOffs_; i++) {
-			if(hitsFw_[i].valid()) {
-				if(ssum.minNonzEltFw == 0 || hitsFw_[i].numElts() < ssum.minNonzEltFw) {
-					ssum.minNonzEltFw = hitsFw_[i].numElts();
+			if(fw_.hits_[i].valid()) {
+				if(ssum.minNonzEltFw == 0 || fw_.hits_[i].numElts() < ssum.minNonzEltFw) {
+					ssum.minNonzEltFw = fw_.hits_[i].numElts();
 				}
-				if(ssum.maxNonzEltFw == 0 || hitsFw_[i].numElts() > ssum.maxNonzEltFw) {
-					ssum.maxNonzEltFw = hitsFw_[i].numElts();
+				if(ssum.maxNonzEltFw == 0 || fw_.hits_[i].numElts() > ssum.maxNonzEltFw) {
+					ssum.maxNonzEltFw = fw_.hits_[i].numElts();
 				}
-				if(ssum.minNonzRangeFw == 0 || hitsFw_[i].numRanges() < ssum.minNonzRangeFw) {
-					ssum.minNonzRangeFw = hitsFw_[i].numRanges();
+				if(ssum.minNonzRangeFw == 0 || fw_.hits_[i].numRanges() < ssum.minNonzRangeFw) {
+					ssum.minNonzRangeFw = fw_.hits_[i].numRanges();
 				}
-				if(ssum.maxNonzRangeFw == 0 || hitsFw_[i].numRanges() > ssum.maxNonzRangeFw) {
-					ssum.maxNonzRangeFw = hitsFw_[i].numRanges();
+				if(ssum.maxNonzRangeFw == 0 || fw_.hits_[i].numRanges() > ssum.maxNonzRangeFw) {
+					ssum.maxNonzRangeFw = fw_.hits_[i].numRanges();
 				}
 			}
-			if(hitsRc_[i].valid()) {
-				if(ssum.minNonzEltRc == 0 || hitsRc_[i].numElts() < ssum.minNonzEltRc) {
-					ssum.minNonzEltRc = hitsRc_[i].numElts();
+			if(rc_.hits_[i].valid()) {
+				if(ssum.minNonzEltRc == 0 || rc_.hits_[i].numElts() < ssum.minNonzEltRc) {
+					ssum.minNonzEltRc = rc_.hits_[i].numElts();
 				}
-				if(ssum.maxNonzEltRc == 0 || hitsRc_[i].numElts() > ssum.maxNonzEltRc) {
-					ssum.maxNonzEltRc = hitsRc_[i].numElts();
+				if(ssum.maxNonzEltRc == 0 || rc_.hits_[i].numElts() > ssum.maxNonzEltRc) {
+					ssum.maxNonzEltRc = rc_.hits_[i].numElts();
 				}
-				if(ssum.minNonzRangeRc == 0 || hitsRc_[i].numRanges() < ssum.minNonzRangeRc) {
-					ssum.minNonzRangeRc = hitsRc_[i].numRanges();
+				if(ssum.minNonzRangeRc == 0 || rc_.hits_[i].numRanges() < ssum.minNonzRangeRc) {
+					ssum.minNonzRangeRc = rc_.hits_[i].numRanges();
 				}
-				if(ssum.maxNonzRangeRc == 0 || hitsRc_[i].numRanges() > ssum.maxNonzRangeRc) {
-					ssum.maxNonzRangeRc = hitsRc_[i].numRanges();
+				if(ssum.maxNonzRangeRc == 0 || rc_.hits_[i].numRanges() > ssum.maxNonzRangeRc) {
+					ssum.maxNonzRangeRc = rc_.hits_[i].numRanges();
 				}
 			}
 		}
@@ -851,7 +996,7 @@ public:
 	 * Return fraction of seeds that aligned uniquely on the given strand.
 	 */
 	size_t numUniqueSeedsStrand(bool fw) const {
-		return uniTotS_[fw ? 0 : 1];
+		return getDirection(fw).numUniqueSeedsStrand();
 	}
 
 	/**
@@ -865,7 +1010,7 @@ public:
 	 * Return fraction of seeds that align repetitively.
 	 */
 	size_t numRepeatSeedsStrand(bool fw) const {
-		return repTotS_[fw ? 0 : 1];
+		return getDirection(fw).numRepeatSeedsStrand();
 	}
 	
 	/**
@@ -875,11 +1020,11 @@ public:
 		EList<size_t>& median = const_cast<EList<size_t>&>(tmpMedian_);
 		median.clear();
 		for(size_t i = 0; i < numOffs_; i++) {
-			if(hitsFw_[i].valid() && hitsFw_[i].numElts() > 0) {
-				median.push_back(hitsFw_[i].numElts());
+			if(fw_.hits_[i].valid() && fw_.hits_[i].numElts() > 0) {
+				median.push_back(fw_.hits_[i].numElts());
 			}
-			if(hitsRc_[i].valid() && hitsRc_[i].numElts() > 0) {
-				median.push_back(hitsRc_[i].numElts());
+			if(rc_.hits_[i].valid() && rc_.hits_[i].numElts() > 0) {
+				median.push_back(rc_.hits_[i].numElts());
 			}
 		}
 		if(tmpMedian_.empty()) {
@@ -901,12 +1046,12 @@ public:
 	double uniquenessFactor() const {
 		double result = 0.0;
 		for(size_t i = 0; i < numOffs_; i++) {
-			if(hitsFw_[i].valid()) {
-				size_t nelt = hitsFw_[i].numElts();
+			if(fw_.hits_[i].valid()) {
+				size_t nelt = fw_.hits_[i].numElts();
 				result += (1.0 / (double)(nelt * nelt));
 			}
-			if(hitsRc_[i].valid()) {
-				size_t nelt = hitsRc_[i].numElts();
+			if(rc_.hits_[i].valid()) {
+				size_t nelt = rc_.hits_[i].numElts();
 				result += (1.0 / (double)(nelt * nelt));
 			}
 		}
@@ -927,25 +1072,25 @@ public:
 	 * Return the number of ranges being held for seeds on the forward
 	 * read strand.
 	 */
-	size_t numRangesFw() const { return numRangesFw_; }
+	size_t numRangesFw() const { return fw_.numRanges(); }
 
 	/**
 	 * Return the number of elements being held for seeds on the
 	 * forward read strand.
 	 */
-	size_t numEltsFw() const { return numEltsFw_; }
+	size_t numEltsFw() const { return fw_.numElts(); }
 
 	/**
 	 * Return the number of ranges being held for seeds on the
 	 * reverse-complement read strand.
 	 */
-	size_t numRangesRc() const { return numRangesRc_; }
+	size_t numRangesRc() const { return rc_.numRanges(); }
 
 	/**
 	 * Return the number of elements being held for seeds on the
 	 * reverse-complement read strand.
 	 */
-	size_t numEltsRc() const { return numEltsRc_; }
+	size_t numEltsRc() const { return rc_.numElts(); }
 	
 	/**
 	 * Given an offset index, return the offset that has that index.
@@ -966,7 +1111,7 @@ public:
 	const QVal& hitsAtOffIdx(bool fw, size_t seedoffidx) const {
 		assert_lt(seedoffidx, numOffs_);
 		assert(repOk(NULL));
-		return fw ? hitsFw_[seedoffidx] : hitsRc_[seedoffidx];
+		return getDirection(fw).hitsAtOffIdx(seedoffidx);
 	}
 
 	/**
@@ -975,7 +1120,7 @@ public:
 	EList<InstantiatedSeed>& instantiatedSeeds(bool fw, size_t seedoffidx) {
 		assert_lt(seedoffidx, numOffs_);
 		assert(repOk(NULL));
-		return fw ? isFw_[seedoffidx] : isRc_[seedoffidx];
+		return getDirection(fw).instantiatedSeeds(seedoffidx);
 	}
 	
 	/**
@@ -1006,7 +1151,7 @@ public:
 			assert_leq(nonzTot_, numRanges_);
 			size_t nonzs = 0;
 			for(int fw = 0; fw <= 1; fw++) {
-				const EList<QVal>& rrs = (fw ? hitsFw_ : hitsRc_);
+				const EList<QVal>& rrs = getDirection(fw).hits_;
 				for(size_t i = 0; i < numOffs_; i++) {
 					if(rrs[i].valid()) {
 						if(rrs[i].numRanges() > 0) nonzs++;
@@ -1036,18 +1181,18 @@ public:
 			for(uint32_t i = 1; i < numOffs_; i++) {
 				for(int fwi = 0; fwi <= 1; fwi++) {
 					bool fw = fwi == 0;
-					EList<QVal>& rrs = (fw ? hitsFw_ : hitsRc_);
+					EList<QVal>& rrs = getDirection(fw).hits_;
 					if(rrs[i].valid() && rrs[i].numElts() > 0) {
 						rankOffs_.push_back(i);
 						rankFws_.push_back(fw);
 					}
 				}
 			}
-			if(hitsFw_[0].valid() && hitsFw_[0].numElts() > 0) {
+			if(fw_.hits_[0].valid() && fw_.hits_[0].numElts() > 0) {
 				rankOffs_.push_back(0);
 				rankFws_.push_back(true);
 			}
-			if(hitsRc_[0].valid() && hitsRc_[0].numElts() > 0) {
+			if(rc_.hits_[0].valid() && rc_.hits_[0].numElts() > 0) {
 				rankOffs_.push_back(0);
 				rankFws_.push_back(false);
 			}
@@ -1062,8 +1207,9 @@ public:
 				assert(rb == 0 || rb == 1);
 				for(int fwi = 0; fwi <= 1; fwi++) {
 					bool fw = (fwi == (rb ? 1 : 0));
-					EList<QVal>& rrs = (fw ? hitsFw_ : hitsRc_);
-					EList<bool>& sorted = (fw ? sortedFw_ : sortedRc_);
+					Direction &dir = getDirection(fw);
+					EList<QVal>& rrs = dir.hits_;
+					EList<bool>& sorted = dir.sorted_;
 					uint32_t i = (rnd.nextU32() % (uint32_t)numOffs_);
 					for(uint32_t ii = 0; ii < numOffs_; ii++) {
 						if(rrs[i].valid() &&         // valid QVal
@@ -1081,11 +1227,7 @@ public:
 					}
 				}
 				assert_neq(MAX_U32, minsz);
-				if(minfw) {
-					sortedFw_[minidx] = true;
-				} else {
-					sortedRc_[minidx] = true;
-				}
+				getDirection(minfw).sorted_[minidx] = true;
 				rankOffs_.push_back(minidx);
 				rankFws_.push_back(minfw);
 			}
@@ -1108,14 +1250,14 @@ public:
 	 * Return true iff all seeds hit for forward read.
 	 */
 	bool allFwSeedsHit() const {
-		return nonzFw_ == numOffs();
+		return fw_.nonz_ == numOffs();
 	}
 
 	/**
 	 * Return true iff all seeds hit for revcomp read.
 	 */
 	bool allRcSeedsHit() const {
-		return nonzRc_ == numOffs();
+		return rc_.nonz_ == numOffs();
 	}
 	
 	/**
@@ -1126,7 +1268,7 @@ public:
 	size_t fewestEditsEE(bool fw, int seedlen, int per) const {
 		assert_gt(seedlen, 0);
 		assert_gt(per, 0);
-		size_t nonz = fw ? nonzFw_ : nonzRc_;
+		size_t nonz = getDirection(fw).nonz_;
 		if(nonz < numOffs()) {
 			int maxdepth = (seedlen + per - 1) / per;
 			int missing = (int)(numOffs() - nonz);
@@ -1142,7 +1284,7 @@ public:
 	 * least one seed hit.
 	 */
 	size_t nonzeroOffsetsFw() const {
-		return nonzFw_;
+		return fw_.nonzeroOffsets();
 	}
 	
 	/**
@@ -1150,7 +1292,7 @@ public:
 	 * that have at least one seed hit.
 	 */
 	size_t nonzeroOffsetsRc() const {
-		return nonzRc_;
+		return rc_.nonzeroOffsets();
 	}
 
 	/**
@@ -1169,21 +1311,14 @@ public:
 	{
 		assert(sorted_);
 		assert_lt(r, nonzTot_);
-		if(rankFws_[r]) {
-			fw = true;
-			offidx = rankOffs_[r];
-			assert_lt(offidx, offIdx2off_.size());
-			off = offIdx2off_[offidx];
-			seedlen = (uint32_t)seqFw_[rankOffs_[r]].length();
-			return hitsFw_[rankOffs_[r]];
-		} else {
-			fw = false;
-			offidx = rankOffs_[r];
-			assert_lt(offidx, offIdx2off_.size());
-			off = offIdx2off_[offidx];
-			seedlen = (uint32_t)seqRc_[rankOffs_[r]].length();
-			return hitsRc_[rankOffs_[r]];
-		}
+		Direction &dir = getDirectionByRank(r);
+		offidx = rankOffs_[r];
+		assert_lt(offidx, offIdx2off_.size());
+		off = offIdx2off_[offidx];
+		fw = dir.isFw();
+		const uint32_t r_off = rankOffs_[r];
+		seedlen = (uint32_t)dir.seq_[r_off].length();
+		return dir.hits_[r_off];
 	}
 
 	/**
@@ -1192,7 +1327,8 @@ public:
 	const BTDnaString& seqByRank(size_t r) {
 		assert(sorted_);
 		assert_lt(r, nonzTot_);
-		return rankFws_[r] ? seqFw_[rankOffs_[r]] : seqRc_[rankOffs_[r]];
+		const uint32_t r_off = rankOffs_[r];
+		return getDirectionByRank(r).seq_[r_off];
 	}
 
 	/**
@@ -1201,30 +1337,31 @@ public:
 	const BTString& qualByRank(size_t r) {
 		assert(sorted_);
 		assert_lt(r, nonzTot_);
-		return rankFws_[r] ? qualFw_[rankOffs_[r]] : qualRc_[rankOffs_[r]];
+		const uint32_t r_off = rankOffs_[r];
+		return getDirectionByRank(r).qual_[r_off];
 	}
 	
 	/**
 	 * Return the list of extracted seed sequences for seeds on either
 	 * the forward or reverse strand.
 	 */
-	EList<BTDnaString>& seqs(bool fw) { return fw ? seqFw_ : seqRc_; }
+	EList<BTDnaString>& seqs(bool fw) { return getDirection(fw).seqs(); }
 
 	/**
 	 * Return the list of extracted quality sequences for seeds on
 	 * either the forward or reverse strand.
 	 */
-	EList<BTString>& quals(bool fw) { return fw ? qualFw_ : qualRc_; }
+	EList<BTString>& quals(bool fw) { return getDirection(fw).quals(); }
 
 	/**
 	 * Return exact end-to-end alignment of fw read.
 	 */
-	EEHit exactFwEEHit() const { return exactFwHit_; }
+	EEHit exactFwEEHit() const { return fw_.exactEEHit(); }
 
 	/**
 	 * Return exact end-to-end alignment of rc read.
 	 */
-	EEHit exactRcEEHit() const { return exactRcHit_; }
+	EEHit exactRcEEHit() const { return rc_.exactEEHit(); }
 	
 	/**
 	 * Return const ref to list of 1-mismatch end-to-end alignments.
@@ -1284,7 +1421,7 @@ public:
 		bool fw,
 		int64_t score)
 	{
-		exactFwHit_.init(top, bot, e1, e2, fw, score);
+		fw_.exactHit_.init(top, bot, e1, e2, fw, score);
 	}
 
 	/**
@@ -1298,15 +1435,15 @@ public:
 		bool fw,
 		int64_t score)
 	{
-		exactRcHit_.init(top, bot, e1, e2, fw, score);
+		rc_.exactHit_.init(top, bot, e1, e2, fw, score);
 	}
 	
 	/**
 	 * Clear out the end-to-end exact alignments.
 	 */
 	void clearExactE2eHits() {
-		exactFwHit_.reset();
-		exactRcHit_.reset();
+		fw_.clearExactE2eHits();
+		rc_.clearExactE2eHits();
 	}
 	
 	/**
@@ -1323,14 +1460,14 @@ public:
 	 * found.
 	 */
 	size_t numE2eHits() const {
-		return exactFwHit_.size() + exactRcHit_.size() + mm1Elt_;
+		return numExactE2eHits() + mm1Elt_;
 	}
 
 	/**
 	 * Return the number of distinct exact end-to-end hits found.
 	 */
 	size_t numExactE2eHits() const {
-		return exactFwHit_.size() + exactRcHit_.size();
+		return fw_.numExactE2eHits() + rc_.numExactE2eHits();
 	}
 
 	/**
@@ -1350,31 +1487,15 @@ public:
 
 protected:
 
-	// As seed hits and edits are added they're sorted into these
-	// containers
-	EList<BTDnaString>  seqFw_;       // seqs for seeds from forward read
-	EList<BTDnaString>  seqRc_;       // seqs for seeds from revcomp read
-	EList<BTString>     qualFw_;      // quals for seeds from forward read
-	EList<BTString>     qualRc_;      // quals for seeds from revcomp read
-	EList<QVal>         hitsFw_;      // hits for forward read
-	EList<QVal>         hitsRc_;      // hits for revcomp read
-	EList<EList<InstantiatedSeed> > isFw_; // hits for forward read
-	EList<EList<InstantiatedSeed> > isRc_; // hits for revcomp read
-	EList<bool>         sortedFw_;    // true iff fw QVal was sorted/ranked
-	EList<bool>         sortedRc_;    // true iff rc QVal was sorted/ranked
+	// One object for forward and backward
+	Direction           fw_;
+	Direction           rc_;
+
 	size_t              nonzTot_;     // # offsets with non-zero size
 	size_t              uniTot_;      // # offsets unique hit
-	size_t              uniTotS_[2];  // # offsets unique hit on each strand
 	size_t              repTot_;      // # offsets repetitive hit
-	size_t              repTotS_[2];  // # offsets repetitive hit on each strand
-	size_t              nonzFw_;      // # offsets into fw read with non-0 size
-	size_t              nonzRc_;      // # offsets into rc read with non-0 size
 	size_t              numRanges_;   // # ranges added
 	size_t              numElts_;     // # elements added
-	size_t              numRangesFw_; // # ranges added for fw seeds
-	size_t              numEltsFw_;   // # elements added for fw seeds
-	size_t              numRangesRc_; // # ranges added for rc seeds
-	size_t              numEltsRc_;   // # elements added for rc seeds
 
 	EList<uint32_t>     offIdx2off_;// map from offset indexes to offsets from 5' end
 
@@ -1391,8 +1512,6 @@ protected:
 	size_t              numOffs_;   // # different seed offsets possible
 	const Read*         read_;      // read from which seeds were extracted
 	
-	EEHit               exactFwHit_; // end-to-end exact hit for fw read
-	EEHit               exactRcHit_; // end-to-end exact hit for rc read
 	EList<EEHit>        mm1Hit_;     // 1-mismatch end-to-end hits
 	size_t              mm1Elt_;     // number of 1-mismatch hit rows
 	bool                mm1Sorted_;  // true iff we've sorted the mm1Hit_ list
