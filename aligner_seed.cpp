@@ -568,8 +568,9 @@ MultiSeedAligner::instantiateSeeds(
 		for(int fwi = 0; fwi < 2; fwi++) {
 			bool fw = (fwi == 0);
 			if((fw && nofwv[n]) || (!fw && norcv[n])) continue;
+			SeedResults::Direction &srd = sr.getDirection(fw);
 			for(int i = 0; i < nseeds; i++) {
-				EList<InstantiatedSeed>& iss = sr.instantiatedSeeds(fw, i);
+				EList<InstantiatedSeed>& iss = srd.instantiatedSeeds(i);
 				iss.resize(sseeds);
 				for(size_t j = 0; j < sseeds; j++) {
 					Seed::prepare(len, read, iss[j]);
@@ -580,6 +581,7 @@ MultiSeedAligner::instantiateSeeds(
 
 		}
 	}
+
 	// For each seed position
 	for(int fwi = 0; fwi < 2; fwi++) {
 	   bool fw = (fwi == 0);
@@ -594,15 +596,21 @@ MultiSeedAligner::instantiateSeeds(
 		const EList<Seed> &seeds = *(pseedsv[n]);
 		const Read &read = *(preadv[n]);
 		SeedResults &sr = *(psrv[n]);
+		SeedResults::Direction &srd = sr.getDirection(fw);
+		SeedSearchMetrics& met = *(pmetv[n]);
 		const int nseeds = nseedsv[n];
 		const int off = offv[n];
+		const int per = perv[n];
 
-		EList<BTDnaString>& seqs = sr.seqs(fw);
-		EList<BTString>& quals   = sr.quals(fw);
+		int& retCnt = retv[n].first;
+		int& instCnt = fw ? instFwv[n].first : instRcv[n].first;
+
+		EList<BTDnaString>& seqs = srd.seqs();
+		EList<BTString>& quals   = srd.quals();
 
 		// For each seed position
 		for(int i = 0; i < nseeds; i++) {
-			int depth = i * perv[n] + (int)off;
+			int depth = i * per + off;
 			int seedlen = seeds[0].len;
 			// Extract the seed sequence at this offset
 			// If fw == true, we extract the characters from i*per to
@@ -616,7 +624,7 @@ MultiSeedAligner::instantiateSeeds(
 				fw);
 			QKey qk(seqs[i] ASSERT_ONLY(, tmpdnastr_));
 			// For each search strategy
-			EList<InstantiatedSeed>& iss = sr.instantiatedSeeds(fw, i);
+			EList<InstantiatedSeed>& iss = srd.instantiatedSeeds(i);
 			for(int j = 0; j < (int)seeds.size(); j++) {
 				iss.expand();
 				assert_eq(seedlen, seeds[j].len);
@@ -633,12 +641,12 @@ MultiSeedAligner::instantiateSeeds(
 					*is))
 				{
 					// Can we fill this seed hit in from the cache?
-					retv[n].first++;
-					if(fwi == 0) { instFwv[n].first++; } else { instRcv[n].first++; }
+					retCnt++;
+					instCnt++;
 				} else {
 					// Seed may fail to instantiate if there are Ns
 					// that prevent it from matching
-					pmetv[n]->filteredseed++;
+					met.filteredseed++;
 					iss.pop_back();
 				}
 			} // for j
