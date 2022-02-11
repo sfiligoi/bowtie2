@@ -498,7 +498,7 @@ pair<int, int> SeedAligner::instantiateSeeds(
 	return ret;
 }
 
-std::vector<std::pair<int, int> >
+void
 MultiSeedAligner::instantiateSeeds(
 		std::vector< SeedAligner* > &palv,                  // seed aligners
                 const std::vector< const EList<Seed>* > &pseedsv,   // search seeds
@@ -512,9 +512,9 @@ MultiSeedAligner::instantiateSeeds(
                 std::vector< SeedResults* > & psrv,                 // holds all the seed hits
                 std::vector< SeedSearchMetrics* > & pmetv,          // metrics
                 std::vector< std::pair<int, int> >& instFwv,
-                std::vector< std::pair<int, int> >& instRcv) {
+                std::vector< std::pair<int, int> >& instRcv,
+		std::vector< std::pair<int, int> >& retv) {
 	const size_t nels = palv.size();
-	std::vector<std::pair<int, int> > retv(nels);
 	std::vector<int> nseedsv(nels);
 
 	assert_eq(palvs.size(), pseedsv.size())
@@ -527,6 +527,7 @@ MultiSeedAligner::instantiateSeeds(
 	assert_eq(psrv.size(), pmetv.size());
 	assert_eq(pmetv.size(), instFwv.size());
 	assert_eq(instFwv.size(), instRcv.size());
+	assert_eq(instRcv.size(), retv.size());
 
 	for (size_t n=0; n<nels; n++) {
 		SeedAligner &al = *(palv[n]);
@@ -644,7 +645,7 @@ MultiSeedAligner::instantiateSeeds(
 		} // for i
 	   } // for n
 	} // for fwi
-	return retv;
+	return;
 }
 
 // Update metrics as part of searchAllSeeds

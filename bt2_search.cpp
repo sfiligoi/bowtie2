@@ -3684,11 +3684,13 @@ static void multiseedSearchWorker(void *vp) {
 		MultiMateReadMultiState mmstatev;
 		vector<size_t> offsetv;
 		vector< std::pair<int, int> > instFwv, instRcv;
+		vector< std::pair<int, int> > instv;
 		active_rstatev.reserve(states_per_worker);
 		mmstatev.reserve(states_per_worker);
 		offsetv.reserve(states_per_worker);
 		instFwv.reserve(states_per_worker);
 		instRcv.reserve(states_per_worker);
+		instv.reserve(states_per_worker);
 
 		vector< size_t > process_mates;
 		process_mates.reserve(2);
@@ -4284,7 +4286,8 @@ static void multiseedSearchWorker(void *vp) {
 
 						instFwv.resize(nels);
 						instRcv.resize(nels);
-						vector< std::pair<int, int> > instv = MultiSeedAligner::instantiateSeeds(
+						instv.resize(nels);
+						MultiSeedAligner::instantiateSeeds(
 									palv,
 									pseedsv,     // search seeds
 									offsetv,     // offset to begin extracting
@@ -4297,7 +4300,8 @@ static void multiseedSearchWorker(void *vp) {
 									pshsv,       // holds all the seed hits
 									psdmv,       // metrics
 									instFwv,     // OUT
-									instRcv);    // OUT
+									instRcv,     // OUT
+									instv);      // OUT
 
 						for (size_t i=0; i<nels; i++) {
 								assert(pshsv[i]->repOk(&pcav[i]->current()));

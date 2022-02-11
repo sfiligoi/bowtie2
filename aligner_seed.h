@@ -1713,7 +1713,7 @@ public:
 	 * Iterate through the seeds that cover the read and initiate a
 	 * search for each seed.
 	 */
-	static std::vector<std::pair<int, int> > instantiateSeeds(
+	static void instantiateSeeds(
 		std::vector< SeedAligner* > &palv,                  // seed aligners
 		const std::vector< const EList<Seed>* > &pseedsv,   // search seeds
 		const std::vector<size_t> offv,                     // offset into read to start extracting
@@ -1726,7 +1726,8 @@ public:
 		std::vector< SeedResults* > & psrv,                 // holds all the seed hits
 		std::vector< SeedSearchMetrics* > & pmetv,          // metrics
 		std::vector< std::pair<int, int> >& instFwv,
-		std::vector< std::pair<int, int> >& instRcv);
+		std::vector< std::pair<int, int> >& instRcv,
+		std::vector< std::pair<int, int> >& instv);
 
 	/**
 	 * Iterate through the seeds that cover the read and initiate a
