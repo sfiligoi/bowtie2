@@ -1097,12 +1097,23 @@ bool SeedAligner::oneMmSearch(
  */
 bool
 SeedAligner::searchSeedBi() {
-	return searchSeedBi(
-		0, 0,
-		0, 0, 0, 0,
-		SideLocus(), SideLocus(),
-		s_->cons[0], s_->cons[1], s_->cons[2], s_->overall,
-		NULL);
+	std::vector<MultiSeedAlignerSearchParams> ppv;
+	ppv.emplace_back(*this, s_->cons[0], s_->cons[1], s_->cons[2], s_->overall);
+	return MultiSeedAligner::searchSeedBi(0, ppv);
+}
+
+// MultiSeedAligner version of the initial invocation
+bool
+MultiSeedAligner::searchSeedBi(std::vector< SeedAligner* > &palv) {
+	std::vector<MultiSeedAlignerSearchParams> ppv;
+	ppv.reserve(palv.size());
+	for(auto pal : palv) {
+		const InstantiatedSeed* s = pal->s_;
+		assert_gt(s.steps.size(), 0);
+		__builtin_prefetch(&(s->steps[0]));
+		ppv.emplace_back(*pal, s->cons[0], s->cons[1], s->cons[2], s->overall);
+	}
+	return searchSeedBi(0, ppv);
 }
 
 inline void
@@ -1405,31 +1416,81 @@ SeedAligner::reportHit(
 	return true;
 }
 
-/**
- * Given a seed, search.  Assumes zone 0 = no backtracking.
- *
- * Return a list of Seed hits.
- * 1. Edits
- * 2. Bidirectional BWT range(s) on either end
- */
+class SeedAlignerSearchParams {
+public:
+	int step;
+	BwtTopBot bwt;         // The 4 BWT idxs
+	SideLocus tloc;       // locus for top (perhaps unititialized)
+	SideLocus bloc;       // locus for bot (perhaps unititialized)
+	std::array<Constraint,3> cv;        // constraints to enforce in seed zones
+	Constraint overall;   // overall constraints to enforce
+	DoublyLinkedList<Edit> *prevEdit;  // previous edit
+
+	SeedAlignerSearchParams(
+		const int _step,              // depth into steps_[] array
+		const BwtTopBot &_bwt,        // The 4 BWT idxs
+		const SideLocus &_tloc,       // locus for top (perhaps unititialized)
+		const SideLocus &_bloc,       // locus for bot (perhaps unititialized)
+		const std::array<Constraint,3> _cv,        // constraints to enforce in seed zones
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: step(_step)
+	, bwt(_bwt)
+	, tloc(_tloc)
+	, bloc(_bloc)
+	, cv(_cv)
+	, overall(_overall)
+	, prevEdit(_prevEdit)
+	{}
+
+	SeedAlignerSearchParams(
+		const int _step,              // depth into steps_[] array
+		const BwtTopBot &_bwt,        // The 4 BWT idxs
+		const SideLocus &_tloc,       // locus for top (perhaps unititialized)
+		const SideLocus &_bloc,       // locus for bot (perhaps unititialized)
+		const Constraint &_c0,        // constraints to enforce in seed zone 0
+		const Constraint &_c1,        // constraints to enforce in seed zone 1
+		const Constraint &_c2,        // constraints to enforce in seed zone 2
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: step(_step)
+	, bwt(_bwt)
+	, tloc(_tloc)
+	, bloc(_bloc)
+	, cv{ _c0, _c1, _c2 }
+	, overall(_overall)
+	, prevEdit(_prevEdit)
+	{}
+
+	// create an empty bwt, tloc and bloc, with step=0
+	SeedAlignerSearchParams(
+		const Constraint &_c0,        // constraints to enforce in seed zone 0
+		const Constraint &_c1,        // constraints to enforce in seed zone 1
+		const Constraint &_c2,        // constraints to enforce in seed zone 2
+		const Constraint &_overall)   // overall constraints to enforce
+	: step(0)
+	, bwt()
+	, tloc()
+	, bloc()
+	, cv{ _c0, _c1, _c2 }
+	, overall(_overall)
+	, prevEdit(NULL)
+	{}
+
+	void checkCV() const {
+			assert(cv[0].acceptable());
+			assert(cv[1].acceptable());
+			assert(cv[2].acceptable());
+	}
+
+};
+
+// return true, if we are already done
 bool
-SeedAligner::searchSeedBi(
-	int step,             // depth into steps_[] array
+SeedAligner::startSearchSeedBi(
 	int depth,            // recursion depth
-	TIndexOffU topf,        // top in BWT
-	TIndexOffU botf,        // bot in BWT
-	TIndexOffU topb,        // top in BWT'
-	TIndexOffU botb,        // bot in BWT'
-	SideLocus tloc,       // locus for top (perhaps unititialized)
-	SideLocus bloc,       // locus for bot (perhaps unititialized)
-	Constraint c0,        // constraints to enforce in seed zone 0
-	Constraint c1,        // constraints to enforce in seed zone 1
-	Constraint c2,        // constraints to enforce in seed zone 2
-	Constraint overall,   // overall constraints to enforce
-	DoublyLinkedList<Edit> *prevEdit  // previous edit
-#if 0
-	, const SABWOffTrack* prevOt // prev off tracker (if tracking started)
-#endif
+	SeedAlignerSearchParams &p,
+	bool &oom             // did we run out of memory?
 	)
 {
 	assert(s_ != NULL);
@@ -1441,30 +1502,27 @@ SeedAligner::searchSeedBi(
 		assert(ebwtBw_ == NULL || ebwtBw_->fchr()[i] == ebwtFw_->fchr()[i]);
 	}
 #endif
-	if(step == (int)s.steps.size()) {
+	oom = false;
+	if(p.step == (int)s.steps.size()) {
 		// Finished aligning seed
-		assert(c0.acceptable());
-		assert(c1.acceptable());
-		assert(c2.acceptable());
-		if(!reportHit(topf, botf, topb, botb, seq_->length(), prevEdit)) {
-			return false; // Memory exhausted
+		p.checkCV();
+		if(!reportHit(p.bwt, seq_->length(), p.prevEdit)) {
+			oom = true; // Memory exhausted
 		}
 		return true;
 	}
 #ifndef NDEBUG
 	if(depth > 0) {
-		assert(botf - topf == 1 ||  bloc.valid());
-		assert(botf - topf > 1  || !bloc.valid());
+		assert(p.bwt.botf - p.bwt.topf == 1 ||  p.bloc.valid());
+		assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
 	}
 #endif
-	int off;
-	TIndexOffU tp[4], bp[4]; // dest BW ranges for "prime" index
-	if(step == 0) {
+	if(p.step == 0) {
 		// Just starting
-		assert(prevEdit == NULL);
-		assert(!tloc.valid());
-		assert(!bloc.valid());
-		off = s.steps[0];
+		assert(p.prevEdit == NULL);
+		assert(!p.tloc.valid());
+		assert(!p.bloc.valid());
+		int off = s.steps[0];
 		bool ltr = off > 0;
 		off = abs(off)-1;
 		// Check whether/how far we can jump using ftab or fchr
@@ -1474,168 +1532,457 @@ SeedAligner::searchSeedBi(
 				assert_geq(off+1, ftabLen-1);
 				off = off - ftabLen + 1;
 			}
-			ebwtFw_->ftabLoHi(*seq_, off, false, topf, botf);
+			ebwtFw_->ftabLoHi(*seq_, off, false, p.bwt.topf, p.bwt.botf);
 			#ifdef NDEBUG
-			if(botf - topf == 0) return true;
+			if(p.bwt.botf - p.bwt.topf == 0) return true;
 			#endif
 			#ifdef NDEBUG
 			if(ebwtBw_ != NULL) {
-				topb = ebwtBw_->ftabHi(*seq_, off);
-				botb = topb + (botf-topf);
+				p.bwt.topb = ebwtBw_->ftabHi(*seq_, off);
+				p.bwt.botb = p.bwt.topb + (p.bwt.botf-p.bwt.topf);
 			}
 			#else
 			if(ebwtBw_ != NULL) {
-				ebwtBw_->ftabLoHi(*seq_, off, false, topb, botb);
-				assert_eq(botf-topf, botb-topb);
+				ebwtBw_->ftabLoHi(*seq_, off, false, p.bwt.topb, p.bwt.botb);
+				assert_eq(p.bwt.botf-p.bwt.topf, p.bwt.botb-p.bwt.topb);
 			}
-			if(botf - topf == 0) return true;
+			if(p.bwt.botf - p.bwt.topf == 0) return true;
 			#endif
-			step += ftabLen;
+			p.step += ftabLen;
 		} else if(s.maxjump > 0) {
 			// Use fchr
 			int c = (*seq_)[off];
 			assert_range(0, 3, c);
-			topf = topb = ebwtFw_->fchr()[c];
-			botf = botb = ebwtFw_->fchr()[c+1];
-			if(botf - topf == 0) return true;
-			step++;
+			p.bwt.topf = p.bwt.topb = ebwtFw_->fchr()[c];
+			p.bwt.botf = p.bwt.botb = ebwtFw_->fchr()[c+1];
+			if(p.bwt.botf - p.bwt.topf == 0) return true;
+			p.step++;
 		} else {
 			assert_eq(0, s.maxjump);
-			topf = topb = 0;
-			botf = botb = ebwtFw_->fchr()[4];
+			p.bwt.topf = p.bwt.topb = 0;
+			p.bwt.botf = p.bwt.botb = ebwtFw_->fchr()[4];
 		}
-		if(step == (int)s.steps.size()) {
+		if(p.step == (int)s.steps.size()) {
 			// Finished aligning seed
-			assert(c0.acceptable());
-			assert(c1.acceptable());
-			assert(c2.acceptable());
-			if(!reportHit(topf, botf, topb, botb, seq_->length(), prevEdit)) {
-				return false; // Memory exhausted
+			p.checkCV();
+			if(!reportHit(p.bwt, seq_->length(), p.prevEdit)) {
+				oom = true; // Memory exhausted
 			}
 			return true;
 		}
-		nextLocsBi(tloc, bloc, topf, botf, topb, botb, step);
-		assert(tloc.valid());
-	} else assert(prevEdit != NULL);
-	assert(tloc.valid());
-	assert(botf - topf == 1 ||  bloc.valid());
-	assert(botf - topf > 1  || !bloc.valid());
-	assert_geq(step, 0);
-	TIndexOffU t[4], b[4]; // dest BW ranges
-	Constraint* zones[3] = { &c0, &c1, &c2 };
-	ASSERT_ONLY(TIndexOffU lasttot = botf - topf);
-	for(int i = step; i < (int)s.steps.size(); i++) {
-		assert_gt(botf, topf);
-		assert(botf - topf == 1 ||  bloc.valid());
-		assert(botf - topf > 1  || !bloc.valid());
-		assert(ebwtBw_ == NULL || botf-topf == botb-topb);
-		assert(tloc.valid());
-		off = s.steps[i];
-		bool ltr = off > 0;
-		const Ebwt* ebwt = ltr ? ebwtBw_ : ebwtFw_;
-		assert(ebwt != NULL);
-		off = abs(off)-1;
-		__builtin_prefetch(&((*seq_)[off]));
-		if(ltr) {
-			tp[0] = tp[1] = tp[2] = tp[3] = topf;
-			bp[0] = bp[1] = bp[2] = bp[3] = botf;
-		} else {
-			tp[0] = tp[1] = tp[2] = tp[3] = topb;
-			bp[0] = bp[1] = bp[2] = bp[3] = botb;
-		}
+		nextLocsBi(p.tloc, p.bloc, p.bwt, p.step);
+		assert(p.tloc.valid());
+	} else assert(p.prevEdit != NULL);
+	assert(p.tloc.valid());
+	assert(p.bwt.botf - p.bwt.topf == 1 ||  p.bloc.valid());
+	assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
+	assert_geq(p.step, 0);
+
+	return false;
+}
+
+class SeedAlignerSearchState {
+public:
+	TIndexOffU tp[4], bp[4]; // dest BW ranges for "prime" index
+	TIndexOffU t[4], b[4];   // dest BW ranges
+	TIndexOffU *tf, *tb, *bf, *bb; // depend on ltr
+	const Ebwt* ebwt;
+
+	TIndexOffU ntop;
+	int off;
+	bool ltr;
+public:
+	int setOff(
+		int _off,
+		const BwtTopBot &bwt,      // The 4 BWT idxs
+		const Ebwt* ebwtFw_,       // forward index (BWT)
+		const Ebwt* ebwtBw_)       // backward/mirror index (BWT')
+	{
+		bool iltr = _off > 0;
 		t[0] = t[1] = t[2] = t[3] = b[0] = b[1] = b[2] = b[3] = 0;
-		if(bloc.valid()) {
+		int ioff = abs(_off)-1;
+		if(iltr) {
+			ebwt = ebwtBw_;
+			tp[0] = tp[1] = tp[2] = tp[3] = bwt.topf;
+			bp[0] = bp[1] = bp[2] = bp[3] = bwt.botf;
+			tf = tp; tb = t;
+			bf = bp; bb = b;
+			ntop = bwt.topb;
+		} else {
+			ebwt = ebwtFw_;
+			tp[0] = tp[1] = tp[2] = tp[3] = bwt.topb;
+			bp[0] = bp[1] = bp[2] = bp[3] = bwt.botb;
+			tf = t; tb = tp;
+			bf = b; bb = bp;
+			ntop = bwt.topf;
+		}
+		assert(ebwt != NULL);
+		off = ioff;
+		ltr = iltr;
+		return ioff;
+	}
+
+public:
+#ifndef NDEBUG
+	TIndexOffU lasttot;
+
+	void initLastTot(TIndexOffU tot) { lasttot = tot;}
+	void assertLeqAndSetLastTot(TIndexOffU tot) {
+		assert_leq(tot, lasttot);
+		lasttot = tot;
+	}
+#else
+	// noop in production code
+	void initLastTot(TIndexOffU tot) {}
+	void assertLeqAndSetLastTot(TIndexOffU tot) {};
+#endif
+
+};
+
+class SeedAlignerSearchSave {
+public:
+	SeedAlignerSearchSave(
+		Constraint &cons, Constraint &ovCons,
+		SideLocus &tloc, SideLocus &bloc)
+	: orgCons(cons), orgOvCons(ovCons)
+	, orgTloc(tloc), orgBloc(bloc)
+	, oldCons(cons), oldOvCons(ovCons)
+	, oldTloc(tloc), oldBloc(bloc)
+	{}
+
+	~SeedAlignerSearchSave() {
+		orgCons = oldCons; orgOvCons = oldOvCons;
+		orgTloc = oldTloc; orgBloc = oldBloc;
+	}
+
+private:
+	// reference to the original variables
+	Constraint &orgCons;
+	Constraint &orgOvCons;
+	SideLocus &orgTloc;
+	SideLocus &orgBloc;
+
+	// copy of the originals
+	const Constraint oldCons;
+	const Constraint oldOvCons;
+	const SideLocus oldTloc;
+	const SideLocus oldBloc;
+};
+
+// State used for recursion
+class SeedAlignerSearchRecState {
+public:
+	SeedAlignerSearchRecState(
+			int j,
+			int c,
+			const SeedAlignerSearchState &sstate,
+			DoublyLinkedList<Edit> *prevEdit)
+	: bwt(sstate.tf[j], sstate.bf[j], sstate.tb[j], sstate.bb[j])
+	, edit(sstate.off, j, c, EDIT_TYPE_MM, false)
+	, editl()
+	, _prevEdit(prevEdit)
+	{
+		assert(_prevEdit == NULL || _prevEdit->next == NULL);
+		editl.payload = edit;
+		if(_prevEdit != NULL) {
+			_prevEdit->next = &editl;
+			editl.prev = _prevEdit;
+		}
+		assert(editl.next == NULL);
+	}
+
+	~SeedAlignerSearchRecState() {
+		if(_prevEdit != NULL) _prevEdit->next = NULL;
+	}
+
+	BwtTopBot bwt;
+	Edit edit;
+	DoublyLinkedList<Edit> editl;
+private:
+	DoublyLinkedList<Edit> *_prevEdit;
+};
+
+class MultiSeedAlignerSearchParams : public SeedAlignerSearchParams {
+public:
+	SeedAligner& al;
+	bool done;
+
+
+	MultiSeedAlignerSearchParams(
+		SeedAligner& _al,             // SeedAligner object associated with params
+		const int _step,              // depth into steps_[] array
+		const BwtTopBot &_bwt,        // The 4 BWT idxs
+		const SideLocus &_tloc,       // locus for top (perhaps unititialized)
+		const SideLocus &_bloc,       // locus for bot (perhaps unititialized)
+		const std::array<Constraint,3> _cv,        // constraints to enforce in seed zones
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: SeedAlignerSearchParams(_step, _bwt, _tloc, _bloc, _cv, _overall, _prevEdit)
+	, al(_al)
+	, done(false)
+	{}
+
+	MultiSeedAlignerSearchParams(
+		SeedAligner& _al,             // SeedAligner object associated with params
+		const int _step,              // depth into steps_[] array
+		const BwtTopBot &_bwt,        // The 4 BWT idxs
+		const SideLocus &_tloc,       // locus for top (perhaps unititialized)
+		const SideLocus &_bloc,       // locus for bot (perhaps unititialized)
+		const Constraint &_c0,        // constraints to enforce in seed zone 0
+		const Constraint &_c1,        // constraints to enforce in seed zone 1
+		const Constraint &_c2,        // constraints to enforce in seed zone 2
+		const Constraint &_overall,   // overall constraints to enforce
+		DoublyLinkedList<Edit> *_prevEdit)  // previous edit
+	: SeedAlignerSearchParams(_step, _bwt, _tloc, _bloc, _c0, _c1, _c2, _overall, _prevEdit)
+	, al(_al)
+	, done(false)
+	{}
+
+	// create an empty bwt, tloc and bloc
+	MultiSeedAlignerSearchParams(
+		SeedAligner& _al,             // SeedAligner object associated with params
+		const Constraint &_c0,        // constraints to enforce in seed zone 0
+		const Constraint &_c1,        // constraints to enforce in seed zone 1
+		const Constraint &_c2,        // constraints to enforce in seed zone 2
+		const Constraint &_overall)   // overall constraints to enforce
+	: SeedAlignerSearchParams(_c0, _c1, _c2, _overall)
+	, al(_al)
+	, done(false)
+	{}
+
+	bool isValid(size_t i) const {
+		return ( (!done) && (i>=((size_t)step)) && (i<al.s_->steps.size()) );
+	}
+};
+
+class MultiSeedAlignerSearchState : public SeedAlignerSearchState {
+public:
+	bool bail;
+	bool leaveZone;
+	int c;
+	Constraint* pcons;
+};
+
+/**
+ * Given a seed, search.  Assumes zone 0 = no backtracking.
+ *
+ * Return a list of Seed hits.
+ * 1. Edits
+ * 2. Bidirectional BWT range(s) on either end
+ */
+
+bool
+MultiSeedAligner::searchSeedBi(
+	int depth,            // recursion depth
+	std::vector<MultiSeedAlignerSearchParams> &ppv)
+{
+	const size_t nels = ppv.size();
+
+	bool done = true;
+
+	for (size_t n=0; n<nels; n++) {
+		MultiSeedAlignerSearchParams &p = ppv[n];
+		bool my_oom = false;
+		bool my_done = p.al.startSearchSeedBi(
+				depth,
+				p,
+				my_oom);
+		if(my_done) {
+			if (my_oom) {
+				// Memory problem, get out for all
+				return false;
+			}
+			p.done = true;
+		}
+		done &= my_done;
+	}
+	if(done) {
+		return true;
+	}
+
+	std::vector<MultiSeedAlignerSearchState> sstatev(nels);
+
+	// temp vectors used in the loop
+	// pre-allocate here to minimize overhead later
+	std::vector<SeedAlignerSearchSave> savev;
+	std::vector<size_t> recloop;
+	std::vector<SeedAlignerSearchRecState> rstatev_save;
+	std::vector<MultiSeedAlignerSearchParams> p2v;
+	savev.reserve(nels); recloop.reserve(nels);
+	rstatev_save.reserve(nels);
+	p2v.reserve(nels);
+
+	size_t min_step=INT_MAX;
+	size_t max_step=0;
+	for (size_t n=0; n<nels; n++) {
+		MultiSeedAlignerSearchParams &p = ppv[n];
+		if (p.done) continue; // invalid => done
+
+		const InstantiatedSeed& s = *p.al.s_;
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+
+		if((size_t)p.step<min_step) min_step=p.step;
+
+		const size_t ssteps = s.steps.size();
+		if(ssteps>max_step) max_step=ssteps;
+
+		sstate.initLastTot(p.bwt.botf - p.bwt.topf);
+
+		__builtin_prefetch(&(s.steps[p.step]));
+		__builtin_prefetch(&(s.zones[p.step]));
+		__builtin_prefetch(&p.tloc);
+		__builtin_prefetch(&p.bloc);
+	}
+	for(size_t i = min_step; i < max_step; i++) {
+	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
+		MultiSeedAlignerSearchParams &p = ppv[n];
+		if(!p.isValid(i)) continue;
+		const InstantiatedSeed& s = *p.al.s_;
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+
+		assert_gt(p.bwt.botf, p.bwt.topf);
+		assert(p.bwt.botf - p.bwt.topf == 1 ||  p.bloc.valid());
+		assert(p.bwt.botf - p.bwt.topf > 1  || !p.bloc.valid());
+		assert(p.al.ebwtBw_ == NULL || p.bwt.botf-p.bwt.topf == p.bwt.botb-p.bwt.topb);
+		assert(p.tloc.valid());
+		int off = sstate.setOff(s.steps[i], p.bwt, p.al.ebwtFw_, p.al.ebwtBw_);
+		__builtin_prefetch(&((*p.al.seq_)[off]));
+		__builtin_prefetch(&(s.steps[i])+1); // recursion may need it at this round
+		__builtin_prefetch(&((*p.al.qual_)[off]));
+		__builtin_prefetch(&(s.zones[i]));
+	   }
+
+	   for (size_t n=0; n<nels; n++) { // iterating OK, could be parallel, too
+		MultiSeedAlignerSearchParams &p = ppv[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+		if(!p.isValid(i)) continue;
+		const InstantiatedSeed& s = *p.al.s_;
+
+		if(p.bloc.valid()) {
 			// Range delimited by tloc/bloc has size >1.  If size == 1,
 			// we use a simpler query (see if(!bloc.valid()) blocks below)
-			bwops_++;
-			ebwt->mapBiLFEx(tloc, bloc, t, b, tp, bp);
-			ASSERT_ONLY(TIndexOffU tot = (b[0]-t[0])+(b[1]-t[1])+(b[2]-t[2])+(b[3]-t[3]));
-			ASSERT_ONLY(TIndexOffU totp = (bp[0]-tp[0])+(bp[1]-tp[1])+(bp[2]-tp[2])+(bp[3]-tp[3]));
+			p.al.bwops_++;
+			sstate.ebwt->mapBiLFEx(p.tloc, p.bloc, sstate.t, sstate.b, sstate.tp, sstate.bp);
+			ASSERT_ONLY(TIndexOffU tot = (sstate.b[0]-sstate.t[0])+(sstate.b[1]-sstate.t[1])+(sstate.b[2]-sstate.t[2])+(sstate.b[3]-sstate.t[3]));
+			ASSERT_ONLY(TIndexOffU totp = (sstate.bp[0]-sstate.tp[0])+(sstate.bp[1]-sstate.tp[1])+(sstate.bp[2]-sstate.tp[2])+(sstate.bp[3]-sstate.tp[3]));
 			assert_eq(tot, totp);
-			assert_leq(tot, lasttot);
-			ASSERT_ONLY(lasttot = tot);
+#ifndef NDEBUG
+			sstate.assertLeqAndSetLastTot(tot);
+#endif
 		}
-		TIndexOffU *tf = ltr ? tp : t, *tb = ltr ? t : tp;
-		TIndexOffU *bf = ltr ? bp : b, *bb = ltr ? b : bp;
-		int c = (*seq_)[off];  assert_range(0, 4, c);
-		// not 100% sure we need it, but redundant prefetches are not dangerous
-		// and helps in the average case
-		prefetchNextLocsBi(tf[c], bf[c], tb[c], bb[c], i+1);
 
-		//
-		bool leaveZone = s.zones[i].first < 0;
-		//bool leaveZoneIns = zones_[i].second < 0;
-		Constraint& cons    = *zones[abs(s.zones[i].first)];
-		//Constraint& insCons = *zones[abs(s.zones[i].second)];
-		int q = (*qual_)[off];
+		int c = (*p.al.seq_)[sstate.off];  assert_range(0, 4, c);
+		int zone = s.zones[i].first;
+
+		sstate.c = c;
+		sstate.leaveZone = zone < 0;
+
+		Constraint& cons    = p.cv[abs(zone)];
+		sstate.pcons = &cons;
+
+		sstate.bail = true;
+		//Constraint& insCons = p.cv[abs(s.zones[i].second)];
 		// Is it legal for us to advance on characters other than 'c'?
-		if(!(cons.mustMatch() && !overall.mustMatch()) || c == 4) {
+		if(!(cons.mustMatch() && !p.overall.mustMatch()) || c == 4) {
 			// There may be legal edits
-			bool bail = false;
-			if(!bloc.valid()) {
+			sstate.bail = false;
+			if(!p.bloc.valid()) {
 				// Range delimited by tloc/bloc has size 1
-				TIndexOffU ntop = ltr ? topb : topf;
-				bwops_++;
-				int cc = ebwt->mapLF1(ntop, tloc);
+				p.al.bwops_++;
+				int cc = sstate.ebwt->mapLF1(sstate.ntop, p.tloc);
 				assert_range(-1, 3, cc);
-				if(cc < 0) bail = true;
-				else { t[cc] = ntop; b[cc] = ntop+1; }
+				if(cc < 0) sstate.bail = true;
+				else { sstate.t[cc] = sstate.ntop; sstate.b[cc] = sstate.ntop+1; }
 			}
-			if(!bail) {
-				if((cons.canMismatch(q, *sc_) && overall.canMismatch(q, *sc_)) || c == 4) {
-					Constraint oldCons = cons, oldOvCons = overall;
-					SideLocus oldTloc = tloc, oldBloc = bloc;
+		}
+	   } // for n
+	   {
+	     MultiSeedAlignerVectorCleaner<SeedAlignerSearchSave> savev_clener(savev);
+	     MultiSeedAlignerVectorCleaner<size_t> recloop_cleaner(recloop);
+	     for (size_t n=0; n<nels; n++) { // first get recloop
+		MultiSeedAlignerSearchParams &p = ppv[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+		if( p.isValid(i) && (!sstate.bail) ) {
+				int c = sstate.c;
+
+				Constraint& cons    = *sstate.pcons;
+
+				int q = (*p.al.qual_)[sstate.off];
+				if((cons.canMismatch(q, *p.al.sc_) && p.overall.canMismatch(q, *p.al.sc_)) || c == 4) {
+					savev.emplace_back(cons, p.overall, p.tloc, p.bloc);
+
 					if(c != 4) {
-						cons.chargeMismatch(q, *sc_);
-						overall.chargeMismatch(q, *sc_);
+						cons.chargeMismatch(q, *p.al.sc_);
+						p.overall.chargeMismatch(q, *p.al.sc_);
 					}
 					// Can leave the zone as-is
-					if(!leaveZone || (cons.acceptable() && overall.acceptable())) {
-						for(int j = 0; j < 4; j++) {
-							if(j == c || b[j] == t[j]) continue;
-							// Potential mismatch
-							nextLocsBi(tloc, bloc, tf[j], bf[j], tb[j], bb[j], i+1);
-							int loff = off;
-							if(!ltr) loff = (int)(s.steps.size() - loff - 1);
-							assert(prevEdit == NULL || prevEdit->next == NULL);
-							Edit edit(off, j, c, EDIT_TYPE_MM, false);
-							DoublyLinkedList<Edit> editl;
-							editl.payload = edit;
-							if(prevEdit != NULL) {
-								prevEdit->next = &editl;
-								editl.prev = prevEdit;
-							}
-							assert(editl.next == NULL);
-							bwedits_++;
-							if(!searchSeedBi(
-								i+1,     // depth into steps_[] array
-								depth+1, // recursion depth
-								tf[j],   // top in BWT
-								bf[j],   // bot in BWT
-								tb[j],   // top in BWT'
-								bb[j],   // bot in BWT'
-								tloc,    // locus for top (perhaps unititialized)
-								bloc,    // locus for bot (perhaps unititialized)
-								c0,      // constraints to enforce in seed zone 0
-								c1,      // constraints to enforce in seed zone 1
-								c2,      // constraints to enforce in seed zone 2
-								overall, // overall constraints to enforce
-								&editl))  // latest edit
-							{
-								return false;
-							}
-							if(prevEdit != NULL) prevEdit->next = NULL;
-						}
+					if(!sstate.leaveZone || (cons.acceptable() && p.overall.acceptable())) {
+						recloop.push_back(n);
 					} else {
 						// Not enough edits to make this path
 						// non-redundant with other seeds
 					}
-					cons = oldCons;
-					overall = oldOvCons;
-					tloc = oldTloc;
-					bloc = oldBloc;
 				}
-				if(cons.canGap() && overall.canGap()) {
+			}
+	     } // for n
+	     const size_t nrlels = recloop.size();
+	     for(int j = 0; j < 4; j++) { // must be executed in order
+		MultiSeedAlignerVectorCleaner<SeedAlignerSearchRecState> rstatev_save_cleaner(rstatev_save);
+		MultiSeedAlignerVectorCleaner<MultiSeedAlignerSearchParams> p2v_cleaner(p2v);
+		for (size_t ni=0; ni<nrlels; ni++) { // build p2v
+			const size_t n=recloop[ni];
+			MultiSeedAlignerSearchParams &p = ppv[n];
+			MultiSeedAlignerSearchState& sstate = sstatev[n];
+
+			int c = sstate.c;
+			if(j == c || sstate.b[j] == sstate.t[j]) continue;
+
+			// Potential mismatch
+			rstatev_save.emplace_back(j, c, sstate, p.prevEdit);
+			SeedAlignerSearchRecState& rstate = rstatev_save.back();
+
+			p.al.nextLocsBi(p.tloc, p.bloc, rstate.bwt, i+1);
+			p.al.bwedits_++;
+			p2v.emplace_back(
+				p.al,              // SeedAligner object associated with params
+				i+1,               // depth into steps_[] array
+				rstate.bwt,      // The 4 BWT idxs
+				p.tloc,            // locus for top (perhaps unititialized)
+				p.bloc,            // locus for bot (perhaps unititialized)
+				p.cv,              // constraints to enforce in seed zones
+				p.overall,         // overall constraints to enforce
+				&rstate.editl);  // latest edit
+		} // for ni
+		if(p2v.size()>0) {
+			// recurse all of the p2v elements at once
+			if(!searchSeedBi(
+				depth+1, // recursion depth
+				p2v))
+			{
+				// oom detected, just bail out all the nels
+				return false;
+			}
+		}
+		// as rstatev gets out of scope, p.prevEdit->next is updated
+	     } // for j
+
+	     // as savev gets out of scope,
+             // restores cons, p.overall, p.tloc, p.bloc
+	   } // end savev and recloop scope
+
+	   for (size_t n=0; n<nels; n++) { // OK to iterate, could be parallel, too
+		MultiSeedAlignerSearchParams &p = ppv[n];
+		MultiSeedAlignerSearchState& sstate = sstatev[n];
+		if(!p.isValid(i)) continue;
+
+                __builtin_prefetch(&p.tloc);
+                __builtin_prefetch(&p.bloc);
+
+		Constraint& cons    = *sstate.pcons;
+		const InstantiatedSeed& s = *p.al.s_;
+
+		if(!sstate.bail) {
+				if(cons.canGap() && p.overall.canGap()) {
 					throw 1; // TODO
 //					int delEx = 0;
 //					if(cons.canDelete(delEx, *sc_) && overall.canDelete(delEx, *sc_)) {
@@ -1646,50 +1993,54 @@ SeedAligner::searchSeedBi(
 //						// Try insert
 //					}
 				}
-			} // if(!bail)
 		}
+
+		int c = sstate.c;
 		if(c == 4) {
-			return true; // couldn't handle the N
+			// couldn't handle the N
+			p.done = true;
+			continue;
 		}
-		if(leaveZone && (!cons.acceptable() || !overall.acceptable())) {
+
+		if(sstate.leaveZone && (!cons.acceptable() || !p.overall.acceptable())) {
 			// Not enough edits to make this path non-redundant with
 			// other seeds
-			return true;
+			p.done = true;
+			continue;
 		}
-		if(!bloc.valid()) {
-			assert(ebwtBw_ == NULL || bp[c] == tp[c]+1);
+		if(!p.bloc.valid()) {
+			assert(p.al.ebwtBw_ == NULL || sstate.bp[c] == sstate.tp[c]+1);
 			// Range delimited by tloc/bloc has size 1
-			TIndexOffU top = ltr ? topb : topf;
-			bwops_++;
-			t[c] = ebwt->mapLF1(top, tloc, c);
-			if(t[c] == OFF_MASK) {
-				return true;
+			p.al.bwops_++;
+			sstate.t[c] = sstate.ebwt->mapLF1(sstate.ntop, p.tloc, c);
+			if(sstate.t[c] == OFF_MASK) {
+				p.done = true;
+				continue;
 			}
-			assert_geq(t[c], ebwt->fchr()[c]);
-			assert_lt(t[c],  ebwt->fchr()[c+1]);
-			b[c] = t[c]+1;
-			assert_gt(b[c], 0);
+			assert_geq(sstate.t[c], sstate.ebwt->fchr()[c]);
+			assert_lt(sstate.t[c],  sstate.ebwt->fchr()[c+1]);
+			sstate.b[c] = sstate.t[c]+1;
+			assert_gt(sstate.b[c], 0);
 		}
-		assert(ebwtBw_ == NULL || bf[c]-tf[c] == bb[c]-tb[c]);
-		assert_leq(bf[c]-tf[c], lasttot);
-		ASSERT_ONLY(lasttot = bf[c]-tf[c]);
-		if(b[c] == t[c]) {
-			return true;
+		assert(p.al.ebwtBw_ == NULL || sstate.bf[c]-sstate.tf[c] == sstate.bb[c]-sstate.tb[c]);
+		sstate.assertLeqAndSetLastTot(sstate.bf[c]-sstate.tf[c]);
+		if(sstate.b[c] == sstate.t[c]) {
+			p.done = true;
+			continue;
 		}
-		topf = tf[c]; botf = bf[c];
-		topb = tb[c]; botb = bb[c];
-		if(i+1 == (int)s.steps.size()) {
+		p.bwt.set(sstate.tf[c], sstate.bf[c], sstate.tb[c], sstate.bb[c]);
+		if(i+1 == s.steps.size()) {
 			// Finished aligning seed
-			assert(c0.acceptable());
-			assert(c1.acceptable());
-			assert(c2.acceptable());
-			if(!reportHit(topf, botf, topb, botb, seq_->length(), prevEdit)) {
+			p.checkCV();
+			if(!p.al.reportHit(p.bwt, p.al.seq_->length(), p.prevEdit)) {
 				return false; // Memory exhausted
 			}
-			return true;
+			p.done = true;
+			continue;
 		}
-		nextLocsBi(tloc, bloc, tf[c], bf[c], tb[c], bb[c], i+1);
-	}
+		p.al.nextLocsBi(p.tloc, p.bloc, p.bwt, i+1);
+	   } // for n
+	} // for i
 	return true;
 }
 

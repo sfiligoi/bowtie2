@@ -1454,6 +1454,8 @@ struct SeedSearchMetrics {
 	MUTEX_T  mutex_m;
 };
 
+class SeedAlignerSearchParams;
+
 /**
  * Given an index and a seeding scheme, searches for seed hits.
  */
@@ -1561,6 +1563,8 @@ public:
 		SeedResults&       hits,   // holds all the seed hits (and exact hit)
 		SeedSearchMetrics& met);   // metrics
 
+	friend class MultiSeedAligner;
+	friend class MultiSeedAlignerSearchParams;
 protected:
 
 	/**
@@ -1595,24 +1599,12 @@ protected:
 	 */
 	bool searchSeedBi();
 	
-	/**
-	 * Main, recursive implementation of the seed search.
-	 */
-	bool searchSeedBi(
-		int step,              // depth into steps_[] array
-		int depth,             // recursion depth
-		TIndexOffU topf,         // top in BWT
-		TIndexOffU botf,         // bot in BWT
-		TIndexOffU topb,         // top in BWT'
-		TIndexOffU botb,         // bot in BWT'
-		SideLocus tloc,        // locus for top (perhaps unititialized)
-		SideLocus bloc,        // locus for bot (perhaps unititialized)
-		Constraint c0,         // constraints to enforce in seed zone 0
-		Constraint c1,         // constraints to enforce in seed zone 1
-		Constraint c2,         // constraints to enforce in seed zone 2
-		Constraint overall,    // overall constraints
-		DoublyLinkedList<Edit> *prevEdit);  // previous edit
-	
+	// helper function
+	bool startSearchSeedBi(
+		int depth,            // recursion depth
+		SeedAlignerSearchParams &p, // all the remaining params
+		bool &oom);           // did we run out of memory?
+
 	/**
 	 * Get tloc and bloc ready for the next step.
 	 */
@@ -1656,6 +1648,32 @@ protected:
 	
 	ASSERT_ONLY(ESet<BTDnaString> hits_); // Ref hits so far for seed being aligned
 	BTDnaString tmpdnastr_;
+};
+
+class MultiSeedAlignerSearchParams;
+
+/**
+ * Multi-read SeedAligner
+ *  - Has no state, just a convenience container
+ */
+class MultiSeedAligner {
+
+public:
+	friend class SeedAligner;
+protected:
+
+	/**
+	 * Given an instantiated seed (in s_ and other fields), search
+	 */
+	static bool searchSeedBi(std::vector< SeedAligner* > &palv);
+
+	/**
+	 * Main, recursive implementation of the seed search.
+	 */
+	static bool searchSeedBi(
+		int depth,             // recursion depth
+		std::vector<MultiSeedAlignerSearchParams> &ppv); // all the remaining params
+
 };
 
 #define INIT_LOCS(top, bot, tloc, bloc, e) { \
