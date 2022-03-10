@@ -23,6 +23,8 @@
 #include <iostream>
 #include <utility>
 #include <limits>
+#include <vector>
+#include <array>
 #include "qual.h"
 #include "ds.h"
 #include "sstring.h"
