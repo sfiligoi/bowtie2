@@ -25,6 +25,26 @@
 using namespace std;
 
 /**
+ * Helper class to mimic in-scope vector
+ * Will make sure the vector is empty at the beginning and at the end
+ */
+template<typename T>
+class MultiSeedAlignerVectorCleaner {
+public:
+	MultiSeedAlignerVectorCleaner(std::vector<T>& vec) noexcept
+	: vec_(vec)
+	{
+		vec_.clear();
+	}
+
+	~MultiSeedAlignerVectorCleaner() noexcept {
+		vec_.clear();
+	}
+private:
+	std::vector<T>& vec_;
+};
+
+/**
  * Construct a constraint with no edits of any kind allowed.
  */
 Constraint Constraint::exact() {
