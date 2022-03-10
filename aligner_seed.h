@@ -1616,7 +1616,7 @@ protected:
 	/**
 	 * Get tloc and bloc ready for the next step.
 	 */
-	inline void nextLocsBi(
+	void nextLocsBi(
 		SideLocus& tloc,            // top locus
 		SideLocus& bloc,            // bot locus
 		TIndexOffU topf,              // top in BWT
