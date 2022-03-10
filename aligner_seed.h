@@ -1596,6 +1596,12 @@ protected:
 		uint16_t len,          // length of hit
 		DoublyLinkedList<Edit> *prevEdit);  // previous edit
 	
+	bool reportHit(
+		const BwtTopBot &bwt,  // The 4 BWT idxs
+		uint16_t len,          // length of hit
+		DoublyLinkedList<Edit> *prevEdit)  // previous edit
+	{ return reportHit(bwt.topf, bwt.botf, bwt.topb, bwt.botb, len, prevEdit); }
+
 	/**
 	 * Given an instantiated seed (in s_ and other fields), search
 	 */
@@ -1619,6 +1625,13 @@ protected:
 		TIndexOffU botb,              // bot in BWT'
 		int step);                  // step to get ready for
 	
+	void nextLocsBi(
+		SideLocus& tloc,            // top locus
+		SideLocus& bloc,            // bot locus
+		const BwtTopBot &bwt,       // The 4 BWT idxs
+		int step)                   // step to get ready for
+	{ nextLocsBi(tloc, bloc, bwt.topf, bwt.botf, bwt.topb, bwt.botb, step); }
+
 	inline void prefetchNextLocsBi(
 		TIndexOffU topf,              // top in BWT
 		TIndexOffU botf,              // bot in BWT
