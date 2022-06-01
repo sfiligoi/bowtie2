@@ -36,7 +36,7 @@ public:
 typedef EList_vec<SSEm128i>       EList_m128i;
 typedef VECCheckpointer<SSEm128i> SSECheckpointer;
 
-# temp workaround
+// temp workaround
 typedef SSECheckpointer Checkpointer;
 
 #endif

@@ -27,7 +27,7 @@
 #include "scoring.h"
 #include "mask.h"
 #include <strings.h>
-#include "vec_util.h>
+#include "vec_util.h"
 
 struct VECMetrics {
 	
