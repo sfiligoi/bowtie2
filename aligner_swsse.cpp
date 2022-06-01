@@ -27,7 +27,7 @@
  * matrix buffer to accomodate the needed configuration of vectors.
  */
 template<>
-void VECMatrix<__m128i,EList_m128i,16>::init(
+void VECMatrix<SSEm128iWrap,EList_m128i,16>::init(
 	size_t nrow,
 	size_t ncol,
 	size_t wperv)
@@ -61,7 +61,7 @@ void VECMatrix<__m128i,EList_m128i,16>::init(
  * Initialize the matrix of masks and backtracking flags.
  */
 template<>
-void VECMatrix<__m128i,EList_m128i,16>::initMasks() {
+void VECMatrix<SSEm128iWrap,EList_m128i,16>::initMasks() {
 	assert_gt(nrow_, 0);
 	assert_gt(ncol_, 0);
 	masks_.resize(nrow_);
@@ -74,7 +74,7 @@ void VECMatrix<__m128i,EList_m128i,16>::initMasks() {
  * element.
  */
 template<>
-int VECMatrix<__m128i,EList_m128i,16>::eltSlow(size_t row, size_t col, size_t mat) const {
+int VECMatrix<SSEm128iWrap,EList_m128i,16>::eltSlow(size_t row, size_t col, size_t mat) const {
 	assert_lt(row, nrow_);
 	assert_lt(col, ncol_);
 	assert_leq(mat, 3);
@@ -82,10 +82,10 @@ int VECMatrix<__m128i,EList_m128i,16>::eltSlow(size_t row, size_t col, size_t ma
 	size_t rowelt = row / nvecrow_;
 	size_t rowvec = row % nvecrow_;
 	size_t eltvec = (col * colstride_) + (rowvec * rowstride_) + mat;
-	if(wperv_ == U8Num) {
+	if(wperv_ == 16) {
 		return (int)((uint8_t*)(matbuf_.ptr() + eltvec))[rowelt];
 	} else {
-		assert_eq(U8Num/2, wperv_);
+		assert_eq(8, wperv_);
 		return (int)((int16_t*)(matbuf_.ptr() + eltvec))[rowelt];
 	}
 }
