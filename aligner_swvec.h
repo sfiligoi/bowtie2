@@ -98,9 +98,13 @@ struct VECMetrics {
 
 // VecTWrap must have a T type inside
 // Needed to preserve attributes of __m128i and alike
-template<class VecTWrap, typename VecListT, size_t U8Num>
+template<class VecC>
 class VECMatrix {
 public:
+	typedef typename VecC::VecT VecT;
+	static constexpr size_t U8Num = VecC::U8Num;
+	typedef typename VecC::VecListT VecListT;
+
 	// Each matrix element is a quartet of vectors.  These constants are used
 	// to identify members of the quartet.
 	const static size_t E   = 0;
@@ -113,7 +117,7 @@ public:
 	/**
 	 * Return a pointer to the matrix buffer.
 	 */
-	inline typename VecTWrap::T *ptr() {
+	inline VecT *ptr() {
 		assert(inited_);
 		return matbuf_.ptr();
 	}
@@ -122,7 +126,7 @@ public:
 	 * Return a pointer to the E vector at the given row and column.  Note:
 	 * here row refers to rows of vectors, not rows of elements.
 	 */
-	inline typename VecTWrap::T* evec(size_t row, size_t col) {
+	inline VecT* evec(size_t row, size_t col) {
 		assert_lt(row, nvecrow_);
 		assert_lt(col, nveccol_);
 		size_t elt = row * rowstride() + col * colstride() + E;
@@ -134,7 +138,7 @@ public:
 	 * Like evec, but it's allowed to ask for a pointer to one column after the
 	 * final one.
 	 */
-	inline typename VecTWrap::T* evecUnsafe(size_t row, size_t col) {
+	inline VecT* evecUnsafe(size_t row, size_t col) {
 		assert_lt(row, nvecrow_);
 		assert_leq(col, nveccol_);
 		size_t elt = row * rowstride() + col * colstride() + E;
@@ -146,7 +150,7 @@ public:
 	 * Return a pointer to the F vector at the given row and column.  Note:
 	 * here row refers to rows of vectors, not rows of elements.
 	 */
-	inline typename VecTWrap::T* fvec(size_t row, size_t col) {
+	inline VecT* fvec(size_t row, size_t col) {
 		assert_lt(row, nvecrow_);
 		assert_lt(col, nveccol_);
 		size_t elt = row * rowstride() + col * colstride() + F;
@@ -158,7 +162,7 @@ public:
 	 * Return a pointer to the H vector at the given row and column.  Note:
 	 * here row refers to rows of vectors, not rows of elements.
 	 */
-	inline typename VecTWrap::T* hvec(size_t row, size_t col) {
+	inline VecT* hvec(size_t row, size_t col) {
 		assert_lt(row, nvecrow_);
 		assert_lt(col, nveccol_);
 		size_t elt = row * rowstride() + col * colstride() + H;
@@ -170,7 +174,7 @@ public:
 	 * Return a pointer to the TMP vector at the given row and column.  Note:
 	 * here row refers to rows of vectors, not rows of elements.
 	 */
-	inline typename VecTWrap::T* tmpvec(size_t row, size_t col) {
+	inline VecT* tmpvec(size_t row, size_t col) {
 		assert_lt(row, nvecrow_);
 		assert_lt(col, nveccol_);
 		size_t elt = row * rowstride() + col * colstride() + TMP;
@@ -182,7 +186,7 @@ public:
 	 * Like tmpvec, but it's allowed to ask for a pointer to one column after
 	 * the final one.
 	 */
-	inline typename VecTWrap::T* tmpvecUnsafe(size_t row, size_t col) {
+	inline VecT* tmpvecUnsafe(size_t row, size_t col) {
 		assert_lt(row, nvecrow_);
 		assert_leq(col, nveccol_);
 		size_t elt = row * rowstride() + col * colstride() + TMP;
@@ -433,20 +437,22 @@ public:
  * All the data associated with the query profile and other data needed for vector
  * alignment of a query.
  */
-template<class VecTW, typename VecListT, size_t U8Num>
+template<class VecC>
 class VECData {
 public:
+	typedef typename VecC::VecListT VecListT;
+
 	VECData(int cat = 0) : profbuf_(cat), mat_(cat) { }
-	VecListT                            profbuf_;     // buffer for query profile & temp vecs
-	VecListT                            vecbuf_;      // buffer for 2 column vectors (not using mat_)
-	size_t                              qprofStride_; // stride for query profile
-	size_t                              gbarStride_;  // gap barrier for query profile
-	VECMatrix<VecTW,VecListT,U8Num>     mat_;         // SSE matrix for holding all E, F, H vectors
-	size_t                              maxPen_;      // biggest penalty of all
-	size_t                              maxBonus_;    // biggest bonus of all
-	size_t                              lastIter_;    // which N-bit striped word has final row?
-	size_t                              lastWord_;    // which word within N-word has final row?
-	int                                 bias_;        // all scores shifted up by this for unsigned
+	VecListT            profbuf_;     // buffer for query profile & temp vecs
+	VecListT            vecbuf_;      // buffer for 2 column vectors (not using mat_)
+	size_t              qprofStride_; // stride for query profile
+	size_t              gbarStride_;  // gap barrier for query profile
+	VECMatrix<VecC>     mat_;         // SSE matrix for holding all E, F, H vectors
+	size_t              maxPen_;      // biggest penalty of all
+	size_t              maxBonus_;    // biggest bonus of all
+	size_t              lastIter_;    // which N-bit striped word has final row?
+	size_t              lastWord_;    // which word within N-word has final row?
+	int                 bias_;        // all scores shifted up by this for unsigned
 };
 
 #define ROWSTRIDE_2COL 4

@@ -23,13 +23,15 @@
 #include "aligner_swvec.h"
 #include "sse_util.h"
 
-class SSEm128iWrap {
+class SSEm128i {
 public:
-	typedef __m128i T;
+	typedef __m128i VecT;
+	typedef EList_m128i VecListT;
+	static constexpr size_t U8Num = 16;
 };
 
-typedef VECMetrics                             SSEMetrics;
-typedef VECMatrix<SSEm128iWrap,EList_m128i,16> SSEMatrix;
-typedef VECData<SSEm128iWrap,EList_m128i,16>   SSEData;
+typedef VECMetrics            SSEMetrics;
+typedef VECMatrix<SSEm128i>   SSEMatrix;
+typedef VECData<SSEm128i>     SSEData;
 
 #endif /*ndef ALIGNER_SWSSE_H_*/

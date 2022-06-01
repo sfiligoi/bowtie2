@@ -27,7 +27,7 @@
  * matrix buffer to accomodate the needed configuration of vectors.
  */
 template<>
-void VECMatrix<SSEm128iWrap,EList_m128i,16>::init(
+void VECMatrix<SSEm128i>::init(
 	size_t nrow,
 	size_t ncol,
 	size_t wperv)
@@ -61,7 +61,7 @@ void VECMatrix<SSEm128iWrap,EList_m128i,16>::init(
  * Initialize the matrix of masks and backtracking flags.
  */
 template<>
-void VECMatrix<SSEm128iWrap,EList_m128i,16>::initMasks() {
+void VECMatrix<SSEm128i>::initMasks() {
 	assert_gt(nrow_, 0);
 	assert_gt(ncol_, 0);
 	masks_.resize(nrow_);
@@ -74,7 +74,7 @@ void VECMatrix<SSEm128iWrap,EList_m128i,16>::initMasks() {
  * element.
  */
 template<>
-int VECMatrix<SSEm128iWrap,EList_m128i,16>::eltSlow(size_t row, size_t col, size_t mat) const {
+int VECMatrix<SSEm128i>::eltSlow(size_t row, size_t col, size_t mat) const {
 	assert_lt(row, nrow_);
 	assert_lt(col, ncol_);
 	assert_leq(mat, 3);
