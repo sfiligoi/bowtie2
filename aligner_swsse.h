@@ -23,13 +23,6 @@
 #include "aligner_swvec.h"
 #include "sse_util.h"
 
-class SSEm128i {
-public:
-	typedef __m128i VecT;
-	typedef EList_m128i VecListT;
-	static constexpr size_t U8Num = 16;
-};
-
 typedef VECMetrics            SSEMetrics;
 typedef VECMatrix<SSEm128i>   SSEMatrix;
 typedef VECData<SSEm128i>     SSEData;

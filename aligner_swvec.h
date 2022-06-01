@@ -27,7 +27,7 @@
 #include "scoring.h"
 #include "mask.h"
 #include <strings.h>
-
+#include "vec_util.h>
 
 struct VECMetrics {
 	
@@ -95,15 +95,13 @@ struct VECMetrics {
  * the backtrace procedure to store information about (a) which cells have been
  * traversed, (b) whether the cell is "terminal" (in local mode), etc.
  */
-
-// VecTWrap must have a T type inside
-// Needed to preserve attributes of __m128i and alike
 template<class VecC>
 class VECMatrix {
 public:
 	typedef typename VecC::VecT VecT;
+	/* 8-bit words per vector element */
 	static constexpr size_t U8Num = VecC::U8Num;
-	typedef typename VecC::VecListT VecListT;
+	typedef EList_vec<VecC> VecListT;
 
 	// Each matrix element is a quartet of vectors.  These constants are used
 	// to identify members of the quartet.
@@ -440,11 +438,9 @@ public:
 template<class VecC>
 class VECData {
 public:
-	typedef typename VecC::VecListT VecListT;
-
 	VECData(int cat = 0) : profbuf_(cat), mat_(cat) { }
-	VecListT            profbuf_;     // buffer for query profile & temp vecs
-	VecListT            vecbuf_;      // buffer for 2 column vectors (not using mat_)
+	EList_vec<VecC>     profbuf_;     // buffer for query profile & temp vecs
+	EList_vec<VecC>     vecbuf_;      // buffer for 2 column vectors (not using mat_)
 	size_t              qprofStride_; // stride for query profile
 	size_t              gbarStride_;  // gap barrier for query profile
 	VECMatrix<VecC>     mat_;         // SSE matrix for holding all E, F, H vectors

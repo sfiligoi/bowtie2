@@ -24,7 +24,7 @@
 /**
  * Given a column of filled-in cells, save the checkpointed cells in cs_.
  */
-void Checkpointer::commitCol(
+void VECCheckpointer<SSEm128i>::commitCol(
 	__m128i *pvH,
 	__m128i *pvE,
 	__m128i *pvF,
