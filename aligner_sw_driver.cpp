@@ -527,6 +527,22 @@ void SwDriver::prioritizeSATups(
 		ca.queryQval(qv, satups_, nrange, nelt);
 		for(size_t j = 0; j < satups_.size(); j++) {
 			const size_t sz = satups_[j].size();
+			satpos.expand();
+			satpos.back().sat = satups_[j];
+			satpos.back().origSz = sz;
+			satpos.back().pos.init(fw, offidx, rdoff, seedlen);
+		}
+		satups_.clear();
+	}
+	{
+	  size_t i =0;
+	  while(i < satpos.size()) { // while logically a for loop, we may re-use the same i more than once
+			SATupleAndPos &mySatpos = satpos[i];
+			const size_t sz = mySatpos.origSz;
+			const bool fw = mySatpos.pos.fw;
+			const uint32_t rdoff = mySatpos.pos.rdoff;
+			const uint32_t seedlen = mySatpos.pos.seedlen;
+ 
 			// Check whether this hit occurs inside the extended boundaries of
 			// another hit we already processed for this read.
 			if(seedmms == 0) {
@@ -549,21 +565,20 @@ void SwDriver::prioritizeSATups(
 					nrange--;
 					assert_geq(nelt, sz);
 					nelt -= sz;
-					continue; // Skip this seed
+					// skip this seed by deleting it
+					satpos.erase(i);
+					continue; // re-try with the seed in this position
 				}
 			}
-			satpos.expand();
-			satpos.back().sat = satups_[j];
-			satpos.back().origSz = sz;
-			satpos.back().pos.init(fw, offidx, rdoff, seedlen);
+
 			if(sz <= nsm) {
 				nsmall++;
 				nsmall_elts += sz;
 			}
-			satpos.back().nlex = satpos.back().nrex = 0;
+			mySatpos.nlex = mySatpos.nrex = 0;
 #ifndef NDEBUG
 			tmp_rdseq_.clear();
-			uint64_t key = satpos.back().sat.key.seq;
+			uint64_t key = mySatpos.sat.key.seq;
 			for(size_t k = 0; k < seedlen; k++) {
 				int c = (int)(key & 3);
 				tmp_rdseq_.append(c);
@@ -577,10 +592,10 @@ void SwDriver::prioritizeSATups(
 					read,
 					ebwtFw,
 					ebwtBw,
-					satpos.back().sat.topf,
-					(TIndexOffU)(satpos.back().sat.topf + sz),
-					satpos.back().sat.topb,
-					(TIndexOffU)(satpos.back().sat.topb + sz),
+					mySatpos.sat.topf,
+					(TIndexOffU)(mySatpos.sat.topf + sz),
+					mySatpos.sat.topb,
+					(TIndexOffU)(mySatpos.sat.topb + sz),
 					fw,
 					rdoff,
 					seedlen,
@@ -588,8 +603,8 @@ void SwDriver::prioritizeSATups(
 					nlex,
 					nrex);
 			}
-			satpos.back().nlex = nlex;
-			satpos.back().nrex = nrex;
+			mySatpos.nlex = nlex;
+			mySatpos.nrex = nrex;
 			if(seedmms == 0 && (nlex > 0 || nrex > 0)) {
 				assert_geq(rdoff, (fw ? nlex : nrex));
 				size_t p5 = rdoff - (fw ? nlex : nrex);
@@ -600,6 +615,8 @@ void SwDriver::prioritizeSATups(
 				range.back().len = seedlen + nlex + nrex;
 				range.back().sz = sz;
 			}
+
+			i++; // this is logicallt a for loop
 		}
 		satups_.clear();
 	}
