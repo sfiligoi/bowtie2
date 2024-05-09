@@ -483,6 +483,101 @@ void SwDriver::extend(
 	return;
 }
 
+// returns if any elements were filtered out
+static inline bool filterRange( size_t starti, size_t &endi,
+				EList<SATupleAndPos, 16> &satpos,
+				EList<ExtendRange>       &rangeFw,
+				EList<ExtendRange>       &rangeRc,
+				size_t &nrange, size_t &nelt) {
+	bool any_skip = false;
+	size_t i = starti;
+	while(i < endi) { // while logically a for loop, we may re-use the same i more than once
+		SATupleAndPos &mySatpos = satpos[i];
+		const size_t sz = mySatpos.origSz;
+		const bool fw = mySatpos.pos.fw;
+		const uint32_t rdoff = mySatpos.pos.rdoff;
+		const uint32_t seedlen = mySatpos.pos.seedlen;
+		// Check whether this hit occurs inside the extended boundaries of
+		// another hit we already processed for this read.
+		// See if we're covered by a previous extended seed hit
+		EList<ExtendRange>& range = fw ? rangeFw : rangeRc;
+		bool skip = false;
+		for(size_t k = 0; k < range.size(); k++) {
+			size_t p5 = range[k].off;
+			size_t len = range[k].len;
+			if(p5 <= rdoff && p5 + len >= (rdoff + seedlen)) {
+				if(sz <= range[k].sz) {
+					skip = true;
+					break;
+				}
+			}
+		}
+		if(skip) {
+			any_skip = true;
+			assert_gt(nrange, 0);
+			nrange--;
+			assert_geq(nelt, sz);
+			nelt -= sz;
+			// skip this seed by deleting it
+			satpos.erase(i);
+			endi--;
+			continue; // re-try with the seed in this position
+		}
+
+		i++; // this is logically a for loop
+	}
+
+	return any_skip;
+}
+
+static inline bool filterRangeOne( size_t starti, size_t &endi,
+				   EList<SATupleAndPos, 16> &satpos,
+				   const bool is_fw_range,
+				   ExtendRange  &range_el,
+				   size_t &nrange, size_t &nelt) {
+	bool any_skip = false;
+	size_t i = starti;
+	while(i < endi) { // while logically a for loop, we may re-use the same i more than once
+		SATupleAndPos &mySatpos = satpos[i];
+		const bool fw = mySatpos.pos.fw;
+		if (fw != is_fw_range) { // not my range, ignore
+			i++; // this is logically a for loop
+			continue;
+		}
+		const size_t sz = mySatpos.origSz;
+		const uint32_t rdoff = mySatpos.pos.rdoff;
+		const uint32_t seedlen = mySatpos.pos.seedlen;
+		// Check whether this hit occurs inside the extended boundaries of
+		// another hit we already processed for this read.
+		// See if we're covered by a previous extended seed hit
+		bool skip = false;
+		{
+			size_t p5 = range_el.off;
+			size_t len = range_el.len;
+			if(p5 <= rdoff && p5 + len >= (rdoff + seedlen)) {
+				if(sz <= range_el.sz) {
+					skip = true;
+				}
+			}
+		}
+		if(skip) {
+			any_skip = true;
+			assert_gt(nrange, 0);
+			nrange--;
+			assert_geq(nelt, sz);
+			nelt -= sz;
+			// skip this seed by deleting it
+			satpos.erase(i);
+			endi--;
+			continue; // re-try with the seed in this position
+		}
+
+		i++; // this is logically a for loop
+	}
+
+	return any_skip;
+}
+
 /**
  * Given seed results, set up all of our state for resolving and keeping
  * track of reference offsets for hits.
@@ -535,46 +630,24 @@ void SwDriver::prioritizeSATups(
 		satups_.clear();
 	}
 	{
-	  size_t i =0;
-	  while(i < satpos.size()) { // while logically a for loop, we may re-use the same i more than once
+	  size_t j =0;
+	  while(j < satpos.size()) { // while logically a for loop, we may re-use the same j more than once
+		static const size_t JBLOCK = 4;
+		size_t jMax = std::min(j+JBLOCK, satpos.size());
+		if (seedmms == 0) {
+		    filterRange(j, jMax, satpos,
+				seedExRangeFw_[matei], seedExRangeRc_[matei],
+				nrange, nelt);
+		}
+		// optimistically run extend on the whole block
+		// will filter out any in-block elements afterwards
+		for (size_t i=j; i<jMax; i++) {
 			SATupleAndPos &mySatpos = satpos[i];
 			const size_t sz = mySatpos.origSz;
 			const bool fw = mySatpos.pos.fw;
 			const uint32_t rdoff = mySatpos.pos.rdoff;
 			const uint32_t seedlen = mySatpos.pos.seedlen;
  
-			// Check whether this hit occurs inside the extended boundaries of
-			// another hit we already processed for this read.
-			if(seedmms == 0) {
-				// See if we're covered by a previous extended seed hit
-				EList<ExtendRange>& range =
-					fw ? seedExRangeFw_[matei] : seedExRangeRc_[matei];
-				bool skip = false;
-				for(size_t k = 0; k < range.size(); k++) {
-					size_t p5 = range[k].off;
-					size_t len = range[k].len;
-					if(p5 <= rdoff && p5 + len >= (rdoff + seedlen)) {
-						if(sz <= range[k].sz) {
-							skip = true;
-							break;
-						}
-					}
-				}
-				if(skip) {
-					assert_gt(nrange, 0);
-					nrange--;
-					assert_geq(nelt, sz);
-					nelt -= sz;
-					// skip this seed by deleting it
-					satpos.erase(i);
-					continue; // re-try with the seed in this position
-				}
-			}
-
-			if(sz <= nsm) {
-				nsmall++;
-				nsmall_elts += sz;
-			}
 			mySatpos.nlex = mySatpos.nrex = 0;
 #ifndef NDEBUG
 			tmp_rdseq_.clear();
@@ -586,7 +659,6 @@ void SwDriver::prioritizeSATups(
 			}
 			tmp_rdseq_.reverse();
 #endif
-			size_t nlex = 0, nrex = 0;
 			if(doExtend) {
 				extend(
 					read,
@@ -600,25 +672,44 @@ void SwDriver::prioritizeSATups(
 					rdoff,
 					seedlen,
 					prm,
-					nlex,
-					nrex);
+					mySatpos.nlex,
+					mySatpos.nrex);
 			}
-			mySatpos.nlex = nlex;
-			mySatpos.nrex = nrex;
+		}
+		// finalize and take care of the in-block filtering
+		for (size_t i=j; i<jMax; i++) {
+			SATupleAndPos &mySatpos = satpos[i];
+			const size_t sz = mySatpos.origSz;
+			const bool fw = mySatpos.pos.fw;
+			const uint32_t rdoff = mySatpos.pos.rdoff;
+			const uint32_t seedlen = mySatpos.pos.seedlen;
+			const size_t nlex = mySatpos.nlex;
+			const size_t nrex = mySatpos.nrex;
+		
+			if(sz <= nsm) {
+				nsmall++;
+				nsmall_elts += sz;
+			}
 			if(seedmms == 0 && (nlex > 0 || nrex > 0)) {
 				assert_geq(rdoff, (fw ? nlex : nrex));
 				size_t p5 = rdoff - (fw ? nlex : nrex);
 				EList<ExtendRange>& range =
 					fw ? seedExRangeFw_[matei] : seedExRangeRc_[matei];
 				range.expand();
-				range.back().off = p5;
-				range.back().len = seedlen + nlex + nrex;
-				range.back().sz = sz;
+				ExtendRange  &range_el = range.back();
+				range_el.off = p5;
+				range_el.len = seedlen + nlex + nrex;
+				range_el.sz = sz;
+				// since we have a new element in range, check all the remaining elements for the filter
+		    		filterRangeOne(i+1, jMax, satpos,
+					fw, range_el,
+					nrange, nelt);
+				// note, we never remove the current element, so can use for(i)
 			}
-
-			i++; // this is logicallt a for loop
 		}
-		satups_.clear();
+
+		j = jMax; // this is logically a for loop
+	  }
 	}
 	assert_leq(nsmall, nrange);
 	nelt_out = nelt; // return the total number of elements
