@@ -316,24 +316,6 @@ void SwDriver::extend(
 	SideLocus tloc, bloc;
 	size_t rdlen = rd.length();
 	size_t lim = fw ? off : rdlen - len - off;
-	// We're about to add onto the beginning, so reverse it
-#ifndef NDEBUG
-	if(false) {
-		// TODO: This will sometimes fail even when the extension is legitimate
-		// This is because contains() comes in from one extreme or the other,
-		// whereas we started from the inside and worked outwards.  This
-		// affects which Ns are OK and which are not OK.
-
-		// Have to do both because whether we can get through an N depends on
-		// which direction we're coming in
-//		bool fwContains = ebwtFw.contains(tmp_rdseq_);
-//		tmp_rdseq_.reverse();
-//		bool bwContains = ebwtBw != NULL && ebwtBw->contains(tmp_rdseq_);
-//		tmp_rdseq_.reverse();
-//		assert(fwContains || bwContains);
-	}
-#endif
-	ASSERT_ONLY(tmp_rdseq_.reverse());
 	if(lim > 0) {
 		const Ebwt *ebwt = &ebwtFw;
 		assert(ebwt != NULL);
@@ -390,15 +372,12 @@ void SwDriver::extend(
 				}
 				bot = top + 1;
 			}
-			ASSERT_ONLY(tmp_rdseq_.append(rdc));
 			if(++nlex == 255) {
 				break;
 			}
 			INIT_LOCS(top, bot, tloc, bloc, *ebwt);
 		}
 	}
-	// We're about to add onto the end, so re-reverse
-	ASSERT_ONLY(tmp_rdseq_.reverse());
 	lim = fw ? rdlen - len - off : off;
 	if(lim > 0 && ebwtBw != NULL) {
 		const Ebwt *ebwt = ebwtBw;
@@ -455,29 +434,12 @@ void SwDriver::extend(
 				}
 				bot = top + 1;
 			}
-			ASSERT_ONLY(tmp_rdseq_.append(rdc));
 			if(++nrex == 255) {
 				break;
 			}
 			INIT_LOCS(top, bot, tloc, bloc, *ebwt);
 		}
 	}
-#ifndef NDEBUG
-	if(false) {
-		// TODO: This will sometimes fail even when the extension is legitimate
-		// This is because contains() comes in from one extreme or the other,
-		// whereas we started from the inside and worked outwards.  This
-		// affects which Ns are OK and which are not OK.
-	
-		// Have to do both because whether we can get through an N depends on
-		// which direction we're coming in
-//		bool fwContains = ebwtFw.contains(tmp_rdseq_);
-//		tmp_rdseq_.reverse();
-//		bool bwContains = ebwtBw != NULL && ebwtBw->contains(tmp_rdseq_);
-//		tmp_rdseq_.reverse();
-//		assert(fwContains || bwContains);
-	}
-#endif
 	assert_lt(nlex, rdlen);
 	assert_lt(nrex, rdlen);
 	return;
@@ -649,16 +611,6 @@ void SwDriver::prioritizeSATups(
 			const uint32_t seedlen = mySatpos.pos.seedlen;
  
 			mySatpos.nlex = mySatpos.nrex = 0;
-#ifndef NDEBUG
-			tmp_rdseq_.clear();
-			uint64_t key = mySatpos.sat.key.seq;
-			for(size_t k = 0; k < seedlen; k++) {
-				int c = (int)(key & 3);
-				tmp_rdseq_.append(c);
-				key >>= 2;
-			}
-			tmp_rdseq_.reverse();
-#endif
 			if(doExtend) {
 				extend(
 					read,
