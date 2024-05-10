@@ -454,6 +454,7 @@ protected:
         size_t maxelts,              // max # elts to report
 		bool all);                   // report all hits?
 
+	template<uint16_t MAXN>
 	static void extendMulti(
 		const Read& rd,       // read
 		const Ebwt& ebwtFw,   // Forward Bowtie index

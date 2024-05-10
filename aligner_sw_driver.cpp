@@ -301,21 +301,25 @@ public:
 	SideLocus bloc;
 
 public:
-	SwDriverExtendState(
+	SwDriverExtendState()
+        : t{0,0,0,0}, b{0,0,0,0}
+	, tloc()
+	, bloc()
+        {} // the rest can stay undefined
+
+	void set(
 		const Ebwt* ebwt_,
 		TIndexOffU top_,
 		TIndexOffU bot_,
 		TIndexOffU topOth_,
 		TIndexOffU botOth_)
-	: ebwt(ebwt_)
-	, top(top_), bot(bot_)
-        , t{0,0,0,0}, b{0,0,0,0}
-        , tp{topOth_,topOth_,topOth_,topOth_}
-	, bp{botOth_,botOth_,botOth_,botOth_}
-	, tloc()
-	, bloc()
-        {
-		assert(ebwt != NULL);
+	{
+		assert(ebwt_ != NULL);
+		ebwt = ebwt_;
+		top = top_; 
+		bot = bot_;
+        	tp[0] = tp[1] = tp[2] = tp[3] = topOth_;
+		bp[0] = bp[1] = bp[2] = bp[3] = botOth_;
 	}
 
 	void init_locs() {
@@ -372,6 +376,7 @@ protected:
  * for the seed hit in both the forward and (if we want to extend to the right)
  * reverse index.
  */
+template<uint16_t MAXN>
 void SwDriver::extendMulti(
 	const Read& rd,       // read
 	const Ebwt& ebwtFw,   // Forward Bowtie index
@@ -380,6 +385,8 @@ void SwDriver::extendMulti(
 	const uint16_t nsatpos,
 	SATupleAndPos *satposArr)
 {
+    SwDriverExtendState estatesFw[MAXN];
+    SwDriverExtendState estatesBw[MAXN];
     size_t rdlen = rd.length();
     for (uint16_t si=0; si<nsatpos; si++) {
 	SATupleAndPos &satpos = satposArr[si]; 
@@ -398,7 +405,8 @@ void SwDriver::extendMulti(
 
 	size_t lim = fw ? off : rdlen - len - off;
 	if(lim > 0) {
-		SwDriverExtendState estate(&ebwtFw, topf, botf, topb, botb);
+		SwDriverExtendState &estate = estatesFw[si];
+		estate.set(&ebwtFw, topf, botf, topb, botb);
 		// Extend left using forward index
 		// See what we get by extending 
 		estate.init_locs();
@@ -425,7 +433,8 @@ void SwDriver::extendMulti(
 	}
 	lim = fw ? rdlen - len - off : off;
 	if(lim > 0 && ebwtBw != NULL) {
-		SwDriverExtendState estate(ebwtBw, topb, botb, topf, botf);
+		SwDriverExtendState &estate = estatesBw[si];
+		estate.set(ebwtBw, topb, botb, topf, botf);
 		// Extend right using backward index
 		// See what we get by extending 
 		estate.init_locs();
@@ -617,7 +626,7 @@ void SwDriver::prioritizeSATups(
 		if(doExtend && (jMax>j)) {
 			// optimistically run extend on the whole block
 			// will filter out any in-block elements afterwards
-			extendMulti(
+			extendMulti<JBLOCK>(
 					read,
 					ebwtFw,
 					ebwtBw,
