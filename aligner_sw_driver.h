@@ -454,7 +454,7 @@ protected:
         size_t maxelts,              // max # elts to report
 		bool all);                   // report all hits?
 
-	void extend(
+	static void extend(
 		const Read& rd,       // read
 		const Ebwt& ebwtFw,   // Forward Bowtie index
 		const Ebwt* ebwtBw,   // Backward Bowtie index
