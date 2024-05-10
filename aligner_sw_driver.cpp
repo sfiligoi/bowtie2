@@ -290,6 +290,82 @@ bool SwDriver::eeSaTups(
 	return true;
 }
 
+class SwDriverExtendState { 
+public:         
+	const Ebwt* ebwt;
+	TIndexOffU top;
+	TIndexOffU bot;
+	TIndexOffU t[4], b[4];   // dest BW ranges
+	TIndexOffU tp[4], bp[4]; // dest BW ranges for "prime" index
+	SideLocus tloc;
+	SideLocus bloc;
+
+public:
+	SwDriverExtendState(
+		const Ebwt* ebwt_,
+		TIndexOffU top_,
+		TIndexOffU bot_,
+		TIndexOffU topOth_,
+		TIndexOffU botOth_)
+	: ebwt(ebwt_)
+	, top(top_), bot(bot_)
+        , t{0,0,0,0}, b{0,0,0,0}
+        , tp{topOth_,topOth_,topOth_,topOth_}
+	, bp{botOth_,botOth_,botOth_,botOth_}
+	, tloc()
+	, bloc()
+        {
+		assert(ebwt != NULL);
+	}
+
+	void init_locs() {
+		INIT_LOCS(top, bot, tloc, bloc, *ebwt);
+	}
+
+
+	bool map(const int rdc) {
+		return bloc.valid() ? 
+			mapBiLFEx(rdc) :
+			mapLF1(rdc);
+	}
+
+protected:
+
+	bool mapBiLFEx(const int rdc) {
+		t[0] = t[1] = t[2] = t[3] =
+		b[0] = b[1] = b[2] = b[3] = 0;
+		ebwt->mapBiLFEx(tloc, bloc, t, b, tp, bp);
+		SANITY_CHECK_4TUP(t, b, tp, bp);
+		int nonz = -1;
+		bool abort = false;
+		size_t origSz = bot - top;
+		for(int j = 0; j < 4; j++) {
+			if(b[j] > t[j]) {
+				if(nonz >= 0) {
+					abort = true;
+					break;
+				}
+				nonz = j;
+				top = t[j]; bot = b[j];
+			}
+		}
+		assert_leq(bot - top, origSz);
+		return (abort || (nonz != rdc && rdc <= 3) || bot - top < origSz);
+	}
+
+	bool mapLF1(const int rdc) {
+		bool res = false;
+		assert_eq(bot, top+1);
+		int c = ebwt->mapLF1(top, tloc);
+		if(c != rdc && rdc <= 3) {
+			res = true;
+		} else {
+			bot = top + 1;
+		}
+		return res;
+	}
+};
+
 /**
  * Extend a seed hit out on either side.  Requires that we know the seed hit's
  * offset into the read and orientation.  Also requires that we know top/bot
@@ -313,24 +389,15 @@ void SwDriver::extend(
 	size_t& nlex = satpos.nlex;         // # positions we can extend to left w/o edit
 	size_t& nrex = satpos.nrex;         // # positions we can extend to right w/o edit
 
-	TIndexOffU t[4], b[4];
-	TIndexOffU tp[4], bp[4];
-	SideLocus tloc, bloc;
+	const BTDnaString& seq = fw ? rd.patFw : rd.patRc;
+
 	size_t rdlen = rd.length();
 	size_t lim = fw ? off : rdlen - len - off;
 	if(lim > 0) {
-		const Ebwt *ebwt = &ebwtFw;
-		assert(ebwt != NULL);
+		SwDriverExtendState estate(&ebwtFw, topf, botf, topb, botb);
 		// Extend left using forward index
-		const BTDnaString& seq = fw ? rd.patFw : rd.patRc;
 		// See what we get by extending 
-		TIndexOffU top = topf, bot = botf;
-		t[0] = t[1] = t[2] = t[3] = 0;
-		b[0] = b[1] = b[2] = b[3] = 0;
-		tp[0] = tp[1] = tp[2] = tp[3] = topb;
-		bp[0] = bp[1] = bp[2] = bp[3] = botb;
-		SideLocus tloc, bloc;
-		INIT_LOCS(top, bot, tloc, bloc, *ebwt);
+		estate.init_locs();
 		for(size_t ii = 0; ii < lim; ii++) {
 			// Starting to left of seed (<off) and moving left
 			size_t i = 0;
@@ -339,60 +406,25 @@ void SwDriver::extend(
 			} else {
 				i = rdlen - off - len - 1 - ii;
 			}
+			prm.nSdFmops++;
 			// Get char from read
 			int rdc = seq.get(i);
 			// See what we get by extending 
-			if(bloc.valid()) {
-				prm.nSdFmops++;
-				t[0] = t[1] = t[2] = t[3] =
-				b[0] = b[1] = b[2] = b[3] = 0;
-				ebwt->mapBiLFEx(tloc, bloc, t, b, tp, bp);
-				SANITY_CHECK_4TUP(t, b, tp, bp);
-				int nonz = -1;
-				bool abort = false;
-				size_t origSz = bot - top;
-				for(int j = 0; j < 4; j++) {
-					if(b[j] > t[j]) {
-						if(nonz >= 0) {
-							abort = true;
-							break;
-						}
-						nonz = j;
-						top = t[j]; bot = b[j];
-					}
-				}
-				assert_leq(bot - top, origSz);
-				if(abort || (nonz != rdc && rdc <= 3) || bot - top < origSz) {
-					break;
-				}
-			} else {
-				assert_eq(bot, top+1);
-				prm.nSdFmops++;
-				int c = ebwt->mapLF1(top, tloc);
-				if(c != rdc && rdc <= 3) {
-					break;
-				}
-				bot = top + 1;
+			if (estate.map(rdc)) {
+				break;
 			}
 			if(++nlex == 255) {
 				break;
 			}
-			INIT_LOCS(top, bot, tloc, bloc, *ebwt);
+			estate.init_locs();
 		}
 	}
 	lim = fw ? rdlen - len - off : off;
 	if(lim > 0 && ebwtBw != NULL) {
-		const Ebwt *ebwt = ebwtBw;
-		assert(ebwt != NULL);
+		SwDriverExtendState estate(ebwtBw, topb, botb, topf, botf);
 		// Extend right using backward index
-		const BTDnaString& seq = fw ? rd.patFw : rd.patRc;
 		// See what we get by extending 
-		TIndexOffU top = topb, bot = botb;
-		t[0] = t[1] = t[2] = t[3] = 0;
-		b[0] = b[1] = b[2] = b[3] = 0;
-		tp[0] = tp[1] = tp[2] = tp[3] = topf;
-		bp[0] = bp[1] = bp[2] = bp[3] = botf;
-		INIT_LOCS(top, bot, tloc, bloc, *ebwt);
+		estate.init_locs();
 		for(size_t ii = 0; ii < lim; ii++) {
 			// Starting to right of seed (<off) and moving right
 			size_t i;
@@ -401,45 +433,17 @@ void SwDriver::extend(
 			} else {
 				i = rdlen - off + ii;
 			}
+			prm.nSdFmops++;
 			// Get char from read
 			int rdc = seq.get(i);
 			// See what we get by extending 
-			if(bloc.valid()) {
-				prm.nSdFmops++;
-				t[0] = t[1] = t[2] = t[3] =
-				b[0] = b[1] = b[2] = b[3] = 0;
-				ebwt->mapBiLFEx(tloc, bloc, t, b, tp, bp);
-				SANITY_CHECK_4TUP(t, b, tp, bp);
-				int nonz = -1;
-				bool abort = false;
-				size_t origSz = bot - top;
-				for(int j = 0; j < 4; j++) {
-					if(b[j] > t[j]) {
-						if(nonz >= 0) {
-							abort = true;
-							break;
-						}
-						nonz = j;
-						top = t[j]; bot = b[j];
-					}
-				}
-				assert_leq(bot - top, origSz);
-				if(abort || (nonz != rdc && rdc <= 3) || bot - top < origSz) {
-					break;
-				}
-			} else {
-				assert_eq(bot, top+1);
-				prm.nSdFmops++;
-				int c = ebwt->mapLF1(top, tloc);
-				if(c != rdc && rdc <= 3) {
-					break;
-				}
-				bot = top + 1;
+			if (estate.map(rdc)) {
+				break;
 			}
 			if(++nrex == 255) {
 				break;
 			}
-			INIT_LOCS(top, bot, tloc, bloc, *ebwt);
+			estate.init_locs();
 		}
 	}
 	assert_lt(nlex, rdlen);
