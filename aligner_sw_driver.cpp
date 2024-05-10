@@ -372,13 +372,18 @@ protected:
  * for the seed hit in both the forward and (if we want to extend to the right)
  * reverse index.
  */
-void SwDriver::extend(
+void SwDriver::extendMulti(
 	const Read& rd,       // read
 	const Ebwt& ebwtFw,   // Forward Bowtie index
 	const Ebwt* ebwtBw,   // Backward Bowtie index
 	PerReadMetrics& prm,  // per-read metrics
-	SATupleAndPos &satpos)
+	const uint16_t nsatpos,
+	SATupleAndPos *satposArr)
 {
+    size_t rdlen = rd.length();
+    for (uint16_t si=0; si<nsatpos; si++) {
+	SATupleAndPos &satpos = satposArr[si]; 
+
 	const TIndexOffU topf = satpos.sat.topf;        // top in fw index
 	const TIndexOffU botf = topf + satpos.origSz;   // bot in fw index
 	const TIndexOffU topb = satpos.sat.topb;        // top in bw index
@@ -391,7 +396,6 @@ void SwDriver::extend(
 
 	const BTDnaString& seq = fw ? rd.patFw : rd.patRc;
 
-	size_t rdlen = rd.length();
 	size_t lim = fw ? off : rdlen - len - off;
 	if(lim > 0) {
 		SwDriverExtendState estate(&ebwtFw, topf, botf, topb, botb);
@@ -448,7 +452,8 @@ void SwDriver::extend(
 	}
 	assert_lt(nlex, rdlen);
 	assert_lt(nrex, rdlen);
-	return;
+    }
+    return;
 }
 
 // returns if any elements were filtered out
@@ -609,17 +614,16 @@ void SwDriver::prioritizeSATups(
 				seedExRangeFw_[matei], seedExRangeRc_[matei],
 				nrange, nelt);
 		}
-		if(doExtend) {
+		if(doExtend && (jMax>j)) {
 			// optimistically run extend on the whole block
 			// will filter out any in-block elements afterwards
-			for (size_t i=j; i<jMax; i++) {
-				extend(
+			extendMulti(
 					read,
 					ebwtFw,
 					ebwtBw,
 					prm,
-					satpos[i]);
-			}
+					jMax-j,
+					&(satpos[j]));
 		}
 		// finalize and take care of the in-block filtering
 		for (size_t i=j; i<jMax; i++) {

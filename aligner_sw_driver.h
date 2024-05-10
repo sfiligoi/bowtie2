@@ -454,12 +454,13 @@ protected:
         size_t maxelts,              // max # elts to report
 		bool all);                   // report all hits?
 
-	static void extend(
+	static void extendMulti(
 		const Read& rd,       // read
 		const Ebwt& ebwtFw,   // Forward Bowtie index
 		const Ebwt* ebwtBw,   // Backward Bowtie index
 		PerReadMetrics& prm,  // per-read metrics
-		SATupleAndPos &satpos);
+		const uint16_t nsatpos,
+		SATupleAndPos *satposArr);
 
 	void prioritizeSATups(
 		const Read& rd,              // read
