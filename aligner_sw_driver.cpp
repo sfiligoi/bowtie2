@@ -300,17 +300,19 @@ void SwDriver::extend(
 	const Read& rd,       // read
 	const Ebwt& ebwtFw,   // Forward Bowtie index
 	const Ebwt* ebwtBw,   // Backward Bowtie index
-	TIndexOffU topf,        // top in fw index
-	TIndexOffU botf,        // bot in fw index
-	TIndexOffU topb,        // top in bw index
-	TIndexOffU botb,        // bot in bw index
-	bool fw,              // seed orientation
-	size_t off,           // seed offset from 5' end
-	size_t len,           // seed length
 	PerReadMetrics& prm,  // per-read metrics
-	size_t& nlex,         // # positions we can extend to left w/o edit
-	size_t& nrex)         // # positions we can extend to right w/o edit
+	SATupleAndPos &satpos)
 {
+	const TIndexOffU topf = satpos.sat.topf;        // top in fw index
+	const TIndexOffU botf = topf + satpos.origSz;   // bot in fw index
+	const TIndexOffU topb = satpos.sat.topb;        // top in bw index
+	const TIndexOffU botb = topb + satpos.origSz;   // bot in bw index
+	const bool fw = satpos.pos.fw;                  // seed orientation
+	const size_t off = satpos.pos.rdoff;            // seed offset from 5' end
+	const size_t len = satpos.pos.seedlen;          // seed length
+	size_t& nlex = satpos.nlex;         // # positions we can extend to left w/o edit
+	size_t& nrex = satpos.nrex;         // # positions we can extend to right w/o edit
+
 	TIndexOffU t[4], b[4];
 	TIndexOffU tp[4], bp[4];
 	SideLocus tloc, bloc;
@@ -585,9 +587,11 @@ void SwDriver::prioritizeSATups(
 		for(size_t j = 0; j < satups_.size(); j++) {
 			const size_t sz = satups_[j].size();
 			satpos.expand();
-			satpos.back().sat = satups_[j];
-			satpos.back().origSz = sz;
-			satpos.back().pos.init(fw, offidx, rdoff, seedlen);
+			SATupleAndPos &mySatpos = satpos.back();
+			mySatpos.sat = satups_[j];
+			mySatpos.origSz = sz;
+			mySatpos.pos.init(fw, offidx, rdoff, seedlen);
+			mySatpos.nlex = mySatpos.nrex = 0;
 		}
 		satups_.clear();
 	}
@@ -601,31 +605,16 @@ void SwDriver::prioritizeSATups(
 				seedExRangeFw_[matei], seedExRangeRc_[matei],
 				nrange, nelt);
 		}
-		// optimistically run extend on the whole block
-		// will filter out any in-block elements afterwards
-		for (size_t i=j; i<jMax; i++) {
-			SATupleAndPos &mySatpos = satpos[i];
-			const size_t sz = mySatpos.origSz;
-			const bool fw = mySatpos.pos.fw;
-			const uint32_t rdoff = mySatpos.pos.rdoff;
-			const uint32_t seedlen = mySatpos.pos.seedlen;
- 
-			mySatpos.nlex = mySatpos.nrex = 0;
-			if(doExtend) {
+		if(doExtend) {
+			// optimistically run extend on the whole block
+			// will filter out any in-block elements afterwards
+			for (size_t i=j; i<jMax; i++) {
 				extend(
 					read,
 					ebwtFw,
 					ebwtBw,
-					mySatpos.sat.topf,
-					(TIndexOffU)(mySatpos.sat.topf + sz),
-					mySatpos.sat.topb,
-					(TIndexOffU)(mySatpos.sat.topb + sz),
-					fw,
-					rdoff,
-					seedlen,
 					prm,
-					mySatpos.nlex,
-					mySatpos.nrex);
+					satpos[i]);
 			}
 		}
 		// finalize and take care of the in-block filtering
