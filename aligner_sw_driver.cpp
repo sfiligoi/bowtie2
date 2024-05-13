@@ -587,7 +587,9 @@ static inline bool filterRangeOne( size_t starti, size_t &endi,
 			nelt -= sz;
 			// skip this seed by deleting it
 			satpos.erase(i);
-			endi--;
+			if (endi>=satpos.size()) {
+				endi--;
+			} // else consider the next element at the end, too
 			continue; // re-try with the seed in this position
 		}
 
@@ -634,7 +636,7 @@ void SwDriver::prioritizeSATups(
 	for(size_t i = 0; i < nonz; i++) {
 		bool fw = true;
 		uint32_t offidx = 0, rdoff = 0, seedlen = 0;
-		QVal qv = sh.hitsByRank(i, offidx, rdoff, fw, seedlen);
+		const QVal &qv = sh.hitsByRank(i, offidx, rdoff, fw, seedlen);
 		assert(qv.valid());
 		assert(!qv.empty());
 		assert(qv.repOk(ca.current()));
@@ -653,16 +655,20 @@ void SwDriver::prioritizeSATups(
 	{
 	  size_t j =0;
 	  while(j < satpos.size()) { // while logically a for loop, we may re-use the same j more than once
-		static const size_t JBLOCK = 4;
+		static const size_t JBLOCK = 2;
 		size_t jMax = std::min(j+JBLOCK, satpos.size());
 		if (seedmms == 0) {
 		    filterRange(j, jMax, satpos,
 				seedExRangeFw_[matei], seedExRangeRc_[matei],
 				nrange, nelt);
+		    if (jMax>(j+1)) {
+			if (satpos[j].pos.fw == satpos[j+1].pos.fw) {
+				// we cannot process in parallel elments of the same fw, due to filtering on range
+				jMax=j+1;
+			}
+		    }
 		}
 		if(doExtend && (jMax>j)) {
-			// optimistically run extend on the whole block
-			// will filter out any in-block elements afterwards
 			extendMulti<JBLOCK>(
 					read,
 					ebwtFw,
@@ -695,11 +701,6 @@ void SwDriver::prioritizeSATups(
 				range_el.off = p5;
 				range_el.len = seedlen + nlex + nrex;
 				range_el.sz = sz;
-				// since we have a new element in range, check all the remaining elements for the filter
-		    		filterRangeOne(i+1, jMax, satpos,
-					fw, range_el,
-					nrange, nelt);
-				// note, we never remove the current element, so can use for(i)
 			}
 		}
 
