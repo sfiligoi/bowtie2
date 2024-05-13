@@ -292,17 +292,24 @@ bool SwDriver::eeSaTups(
 
 class SwDriverExtendState { 
 public:         
-	const Ebwt* ebwt;
+	size_t   ioff;      // offset between ii and i
+	int16_t  imul;      // what we should multiply ii by
+	uint16_t lim;
 	TIndexOffU top;
 	TIndexOffU bot;
 	TIndexOffU t[4], b[4];   // dest BW ranges
 	TIndexOffU tp[4], bp[4]; // dest BW ranges for "prime" index
 	SideLocus tloc;
 	SideLocus bloc;
+	// pointers to other values, not owned
+	const Ebwt* ebwt;
+	const BTDnaString *seq;
+	size_t *nex;
 
 public:
 	SwDriverExtendState()
-        : t{0,0,0,0}, b{0,0,0,0}
+	: lim(0)
+        , t{0,0,0,0}, b{0,0,0,0}
 	, tloc()
 	, bloc()
         {} // the rest can stay undefined
@@ -312,7 +319,12 @@ public:
 		TIndexOffU top_,
 		TIndexOffU bot_,
 		TIndexOffU topOth_,
-		TIndexOffU botOth_)
+		TIndexOffU botOth_,
+		size_t lim_,
+		const BTDnaString *seq_,
+		size_t *nex_,
+		size_t ioff_,      // offset between ii and i
+		int16_t imul_)     // what we should multiply ii by
 	{
 		assert(ebwt_ != NULL);
 		ebwt = ebwt_;
@@ -320,12 +332,24 @@ public:
 		bot = bot_;
         	tp[0] = tp[1] = tp[2] = tp[3] = topOth_;
 		bp[0] = bp[1] = bp[2] = bp[3] = botOth_;
+		assert(seq_ != NULL);
+		seq = seq_;
+		assert(nex_ != NULL);
+		nex = nex_;
+		ioff = ioff_;
+		imul = imul_;
+		lim =  (lim_<0) ?
+			uint16_t(0) : // do not care if it is negative
+		        ( (lim_>1024) ?
+			   uint16_t(1024) : // the logic will never go over 256, so use an arbitrary cutoff bewtween 256 and int16
+			   uint16_t(lim_) ); // we know it fits now
 	}
 
 	void init_locs() {
 		INIT_LOCS(top, bot, tloc, bloc, *ebwt);
 	}
 
+	size_t geti(uint16_t ii) { return ii*imul+ioff; }
 
 	bool map(const int rdc) {
 		return bloc.valid() ? 
@@ -385,9 +409,12 @@ void SwDriver::extendMulti(
 	const uint16_t nsatpos,
 	SATupleAndPos *satposArr)
 {
-    SwDriverExtendState estatesFw[MAXN];
-    SwDriverExtendState estatesBw[MAXN];
-    size_t rdlen = rd.length();
+    uint16_t nstates = 0;
+    SwDriverExtendState estates[2*MAXN]; // contains both Fw and Bw
+    uint16_t nexes[2*MAXN];  // same size as estates
+    uint16_t max_lim = 0;
+
+    const size_t rdlen = rd.length();
     for (uint16_t si=0; si<nsatpos; si++) {
 	SATupleAndPos &satpos = satposArr[si]; 
 
@@ -403,64 +430,74 @@ void SwDriver::extendMulti(
 
 	const BTDnaString& seq = fw ? rd.patFw : rd.patRc;
 
-	size_t lim = fw ? off : rdlen - len - off;
-	if(lim > 0) {
-		SwDriverExtendState &estate = estatesFw[si];
-		estate.set(&ebwtFw, topf, botf, topb, botb);
-		// Extend left using forward index
-		// See what we get by extending 
-		estate.init_locs();
-		for(size_t ii = 0; ii < lim; ii++) {
+	{
+		size_t lim = fw ? off : rdlen - len - off;
+		if (lim>0) {
 			// Starting to left of seed (<off) and moving left
-			size_t i = 0;
+			size_t ioff = 0;
 			if(fw) {
-				i = off - ii - 1;
+				ioff = off - 1;
 			} else {
-				i = rdlen - off - len - 1 - ii;
+				ioff = rdlen - off - len - 1;
 			}
-			prm.nSdFmops++;
-			// Get char from read
-			int rdc = seq.get(i);
-			// See what we get by extending 
-			if (estate.map(rdc)) {
-				break;
-			}
-			if(++nlex == 255) {
-				break;
-			}
+			SwDriverExtendState &estate = estates[nstates];
+			estate.set(&ebwtFw, topf, botf, topb, botb, lim, &seq, &nlex, ioff, -1);
 			estate.init_locs();
+			nexes[nstates] = 0;
+			nstates++;
+			if (estate.lim > max_lim) max_lim = estate.lim;
 		}
 	}
-	lim = fw ? rdlen - len - off : off;
-	if(lim > 0 && ebwtBw != NULL) {
-		SwDriverExtendState &estate = estatesBw[si];
-		estate.set(ebwtBw, topb, botb, topf, botf);
-		// Extend right using backward index
-		// See what we get by extending 
-		estate.init_locs();
-		for(size_t ii = 0; ii < lim; ii++) {
+	if (ebwtBw != NULL) {
+		size_t lim = fw ? rdlen - len - off : off;
+		if (lim>0) {
 			// Starting to right of seed (<off) and moving right
-			size_t i;
+			size_t ioff;
 			if(fw) {
-				i = ii + len + off;
+				ioff = len + off;
 			} else {
-				i = rdlen - off + ii;
+				ioff = rdlen - off;
 			}
-			prm.nSdFmops++;
-			// Get char from read
-			int rdc = seq.get(i);
-			// See what we get by extending 
-			if (estate.map(rdc)) {
-				break;
-			}
-			if(++nrex == 255) {
-				break;
-			}
+			SwDriverExtendState &estate = estates[nstates];
+			estate.set(ebwtBw, topb, botb, topf, botf, lim, &seq, &nrex, ioff, 1);
 			estate.init_locs();
+			nexes[nstates] = 0;
+			nstates++;
+			if (estate.lim > max_lim) max_lim = estate.lim;
 		}
 	}
-	assert_lt(nlex, rdlen);
-	assert_lt(nrex, rdlen);
+		
+    }
+    // switch loops to allow for prefetch to be effective (in init_locs)
+    for(uint16_t ii = 0; ii < max_lim; ii++) {
+	for (uint16_t ni=0; ni<nstates; ni++) {
+		SwDriverExtendState &estate = estates[ni];
+		const uint16_t lim = estate.lim;
+		if (ii<lim) {
+			// See what we get by extending
+			size_t i = estate.geti(ii);
+			prm.nSdFmops++;
+			// Get char from read
+			int rdc = estate.seq->get(i);
+			// See what we get by extending 
+			if (estate.map(rdc)) {
+				// we are done
+				estate.lim = 0; // avoid further progress
+			} else if(++(nexes[ni]) == 255) {
+				// hit the limit
+				estate.lim = 0; // avoid further progress
+			} else {
+				estate.init_locs();
+			}
+		}
+	}
+    }
+    // save the output data back to external storage
+    for (uint16_t ni=0; ni<nstates; ni++) {
+		SwDriverExtendState &estate = estates[ni];
+		uint16_t& nex = nexes[ni];
+		assert_lt(size_t(nex), rdlen);
+		*(estate.nex) = nex;
     }
     return;
 }
