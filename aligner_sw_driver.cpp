@@ -857,7 +857,7 @@ int SwDriver::extendSeeds(
                     maxIters,     // max # to report
 					all);         // report all hits?
 				assert_eq(gws_.size(), rands_.size());
-				assert_eq(gws_.size(), satpos_.size());
+				assert_eq(rands_.size(), satpos_.size());
 			} else {
 				eeMode = false;
 			}
@@ -890,7 +890,7 @@ int SwDriver::extendSeeds(
 					nelt,          // out: # elements total
 					all);          // report all hits?
 				assert_eq(gws_.size(), rands_.size());
-				assert_eq(gws_.size(), satpos_.size());
+				assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				firstExtend = false;
 			}
@@ -899,7 +899,8 @@ int SwDriver::extendSeeds(
 				break;
 			}
 		}
-		for(size_t i = 0; i < gws_.size(); i++) {
+		const size_t satpos_size = satpos_.size();
+		for(size_t i = 0; i < satpos_size; i++) {
 			if(eeMode && eehits_[i].score < minsc) {
 				return EXTEND_PERFECT_SCORE;
 			}
@@ -919,7 +920,6 @@ int SwDriver::extendSeeds(
 			// back to this range later.
 			size_t riter = 0;
 			while(!rands_[i].done() && (first || is_small || eeMode)) {
-				assert(!gws_[i].done());
 				riter++;
 				if(minsc == perfectScore) {
 					if(!eeMode || eehits_[i].score < perfectScore) {
@@ -943,6 +943,7 @@ int SwDriver::extendSeeds(
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
 				if (earlyAdvance) {
+					assert(!gws_[i].done());
 					// Resolve next element offset
 					WalkResult wr;
 					//cerr << "elt=" << elt << endl;
@@ -1317,8 +1318,8 @@ int SwDriver::extendSeeds(
 				// At this point we know that we aren't bailing, and will
 				// continue to resolve seed hits.  
 
-			} // while(!gws_[i].done())
-		}
+			} // while(!rands_[i].done())
+		} // for(size_t i = 0; i < satpos_size; i++)
 	}
 	// Short-circuited because a limit, e.g. -k, -m or -M, was exceeded
 	return EXTEND_EXHAUSTED_CANDIDATES;
@@ -1547,11 +1548,11 @@ int SwDriver::extendSeedsPaired(
                     maxIters,     // max elts to report
 					all);         // report all hits
 				assert_eq(gws_.size(), rands_.size());
-				assert_eq(gws_.size(), satpos_.size());
+				assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				// Initialize list that contains the mate-finding failure
 				// streak for each range
-				mateStreaks_.resize(gws_.size());
+				mateStreaks_.resize(satpos_.size());
 				mateStreaks_.fill(0);
 			} else {
 				eeMode = false;
@@ -1587,10 +1588,10 @@ int SwDriver::extendSeedsPaired(
 					nelt,          // out: # elements total
 					all);          // report all hits?
 				assert_eq(gws_.size(), rands_.size());
-				assert_eq(gws_.size(), satpos_.size());
+				assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				firstExtend = false;
-				mateStreaks_.resize(gws_.size());
+				mateStreaks_.resize(satpos_.size());
 				mateStreaks_.fill(0);
 			}
 			if(neltLeft == 0) {
@@ -1598,7 +1599,8 @@ int SwDriver::extendSeedsPaired(
 				break;
 			}
 		}
-		for(size_t i = 0; i < gws_.size(); i++) {
+		const size_t satpos_size = satpos_.size();
+		for(size_t i = 0; i < satpos_size; i++) {
 			if(eeMode && eehits_[i].score < minsc) {
 				return EXTEND_PERFECT_SCORE;
 			}
@@ -1650,11 +1652,11 @@ int SwDriver::extendSeedsPaired(
 				}
 				prm.nExIters++;
 				first = false;
-				assert(!gws_[i].done());
 				size_t elt = rands_[i].next(rnd);
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
 				if (earlyAdvance) {
+					assert(!gws_[i].done());
 					// Resolve next element offset
 					WalkResult wr;
 					SARangeWithOffs<TSlice> sa;
@@ -2433,8 +2435,8 @@ int SwDriver::extendSeedsPaired(
 				}
 				// At this point we know that we aren't bailing, and will continue to resolve seed hits.  
 
-			} // while(!gw.done())
-		} // for(size_t i = 0; i < gws_.size(); i++)
+			} // while(!rands.done())
+		} // for(size_t i = 0; i < satpos_size; i++)
 	}
 	return EXTEND_EXHAUSTED_CANDIDATES;
 }
