@@ -504,6 +504,8 @@ void SwDriver::prioritizeSATups(
 	bool lensq,                  // square length in weight calculation
 	bool szsq,                   // square range size in weight calculation
 	size_t nsm,                  // if range as <= nsm elts, it's "small"
+	const bool earlyAdvance,
+	const bool eeMode,
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
@@ -511,7 +513,6 @@ void SwDriver::prioritizeSATups(
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
-	const bool earlyAdvance = true; // TODO: Make it a parameter
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
 	satups_.clear();
@@ -578,9 +579,20 @@ void SwDriver::prioritizeSATups(
 					sa,     // SA tuples: ref hit, salist range
 					rnd,    // pseudo-random generator
 					wlm);   // metrics
+				satpos.back().sai.resizeNoCopy(sz);
 				for (size_t elt=0; elt<sz; elt++) {
 					WalkResult wr;
 					gws.advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+					SAIdx& sai = satpos.back().sai[elt];
+					sai.reset();
+					ebwtFw.joinedToTextOff(
+						wr.elt.len,
+						wr.toff,
+						sai.tidx,
+						sai.toff,
+						sai.tlen,
+						eeMode,     // reject straddlers?
+						sai.straddled); // did it straddle?
 				}
 			}
 			satpos.back().nlex = satpos.back().nrex = 0;
@@ -758,6 +770,9 @@ void SwDriver::prioritizeSATups(
 				rnd,    // pseudo-random generator
 				wlm);   // metrics
 			assert(gws_.back().initialized());
+		} else {
+			satpos_.back().sai.resizeNoCopy(1);
+			satpos_.back().sai[0] = satpos2_[ri].sai[r];
 		}
 		// Initialize random selector
 		rands_.expand();
@@ -896,6 +911,8 @@ int SwDriver::extendSeeds(
 					true,          // square extended length
 					true,          // square SA range size
 					nsm,           // smallness threshold
+					earlyAdvance,
+					eeMode,
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -955,6 +972,8 @@ int SwDriver::extendSeeds(
 				size_t elt = rands_[i].next(rnd);
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
+				TIndexOffU tidx = 0, toff = 0, tlen = 0;
+				bool straddled = false;
 				if (!earlyAdvance) {
 					assert(!gws_[i].done());
 					// Resolve next element offset
@@ -967,9 +986,21 @@ int SwDriver::extendSeeds(
 					gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
 					wr_toff = wr.toff;
 					wr_len  = wr.elt.len;
+					ebwtFw.joinedToTextOff(
+						wr_len,
+						wr_toff,
+						tidx,
+						toff,
+						tlen,
+						eeMode,     // reject straddlers?
+						straddled); // did it straddle?
 				} else {
 					wr_toff = satpos_[i].sat.offs[elt];
 					wr_len  = satpos_[i].sat.key.len;
+					tidx = satpos_[i].sai[elt].tidx;
+					toff = satpos_[i].sai[elt].toff;
+					tlen = satpos_[i].sai[elt].tlen;
+					straddled = satpos_[i].sai[elt].straddled;
 				}
 				eltsDone++;
 				if(!eeMode) {
@@ -977,16 +1008,6 @@ int SwDriver::extendSeeds(
 					neltLeft--;
 				}
 				assert_neq(OFF_MASK, wr_toff);
-				TIndexOffU tidx = 0, toff = 0, tlen = 0;
-				bool straddled = false;
-				ebwtFw.joinedToTextOff(
-					wr_len,
-					wr_toff,
-					tidx,
-					toff,
-					tlen,
-					eeMode,     // reject straddlers?
-					straddled); // did it straddle?
 				if(tidx == OFF_MASK) {
 					// The seed hit straddled a reference boundary so the seed hit
 					// isn't valid
@@ -1594,6 +1615,8 @@ int SwDriver::extendSeedsPaired(
 					true,          // square extended length
 					true,          // square SA range size
 					nsm,           // smallness threshold
+					earlyAdvance,
+					eeMode,
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -1668,6 +1691,8 @@ int SwDriver::extendSeedsPaired(
 				size_t elt = rands_[i].next(rnd);
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
+				TIndexOffU tidx = 0, toff = 0, tlen = 0;
+				bool straddled = false;
 				if (!earlyAdvance) {
 					assert(!gws_[i].done());
 					// Resolve next element offset
@@ -1679,24 +1704,26 @@ int SwDriver::extendSeedsPaired(
 					gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
 					wr_toff = wr.toff;
 					wr_len  = wr.elt.len;
+					ebwtFw.joinedToTextOff(
+						wr_len,
+						wr_toff,
+						tidx,
+						toff,
+						tlen,
+						eeMode,       // reject straddlers?
+						straddled);   // straddled?
 				} else {
 					wr_toff = satpos_[i].sat.offs[elt];
 					wr_len  = satpos_[i].sat.key.len;
+					tidx = satpos_[i].sai[elt].tidx;
+					toff = satpos_[i].sai[elt].toff;
+					tlen = satpos_[i].sai[elt].tlen;
+					straddled = satpos_[i].sai[elt].straddled;
 				}
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
 				assert_neq(OFF_MASK, wr_toff);
-				TIndexOffU tidx = 0, toff = 0, tlen = 0;
-				bool straddled = false;
-				ebwtFw.joinedToTextOff(
-					wr_len,
-					wr_toff,
-					tidx,
-					toff,
-					tlen,
-					eeMode,       // reject straddlers?
-					straddled);   // straddled?
 				if(tidx == OFF_MASK) {
 					// The seed hit straddled a reference boundary so the seed hit
 					// isn't valid

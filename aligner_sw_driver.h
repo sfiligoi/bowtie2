@@ -151,6 +151,23 @@ struct SeedPos {
 };
 
 /**
+ * Projection of sat in the forward index
+ */
+struct SAIdx {
+	TIndexOffU tidx;
+	TIndexOffU toff;
+	TIndexOffU tlen;
+	bool straddled;
+
+	void reset() {
+		tidx = 0;
+		toff = 0;
+		tlen = 0;
+		straddled = false;
+	}
+};
+
+/**
  * An SATuple along with the associated seed position.
  */
 struct SATupleAndPos {
@@ -160,7 +177,9 @@ struct SATupleAndPos {
 	size_t  origSz; // size of range this was taken from
 	size_t  nlex;   // # position we can extend seed hit to left w/o edit
 	size_t  nrex;   // # position we can extend seed hit to right w/o edit
-	
+
+	EList<SAIdx,16> sai; // map of sat to idx
+
 	bool operator<(const SATupleAndPos& o) const {
 		if(sat < o.sat) return true;
 		if(sat > o.sat) return false;
@@ -481,6 +500,8 @@ protected:
 		bool lensq,                  // square extended length
 		bool szsq,                   // square SA range size
 		size_t nsm,                  // if range as <= nsm elts, it's "small"
+		const bool earlyAdvance,
+		const bool eeMode,
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
