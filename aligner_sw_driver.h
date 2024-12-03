@@ -189,6 +189,30 @@ struct SATupleAndPos {
 	bool operator==(const SATupleAndPos& o) const {
 		return sat == o.sat && pos == o.pos;
 	}
+
+	// get one element out of another satpos
+	void init(const SATupleAndPos& other, size_t idx, bool copySai, bool copyEx = false) {
+		SATuple s;
+		TSlice o;
+		o.init(other.sat.offs, idx, idx+1);
+		s.init(other.sat.key, (TIndexOffU)(other.sat.topf + idx), OFF_MASK, o);
+		sat = s;
+		pos = other.pos;
+		origSz = other.origSz;
+		if (copyEx) {
+			nlex = other.nlex;
+			nrex = other.nrex;
+		} else {
+			nlex = 0;
+			nrex = 0;
+		}
+		if (copySai) {
+			sai.resizeNoCopy(1);
+			sai[0] = other.sai[idx];
+		} else {
+			sai.clear();
+		}
+	}
 };
 
 /**

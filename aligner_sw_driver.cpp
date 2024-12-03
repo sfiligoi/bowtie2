@@ -748,17 +748,12 @@ void SwDriver::prioritizeSATups(
 			rowsamp_.finishedRange(ri - nsmall);
 		}
 		// Add the element to the satpos_ list
-		SATuple sat;
-		TSlice o;
-		o.init(satpos2_[ri].sat.offs, r, r+1);
-		sat.init(satpos2_[ri].sat.key, (TIndexOffU)(satpos2_[ri].sat.topf + r), OFF_MASK, o);
 		satpos_.expand();
-		satpos_.back().sat = sat;
-		satpos_.back().origSz = satpos2_[ri].origSz;
-		satpos_.back().pos = satpos2_[ri].pos;
+		satpos_.back().init(satpos2_[ri],r,earlyAdvance);
 		if (!earlyAdvance) {
 			// Initialize GroupWalk object
 			gws_.expand();
+			SATuple& sat = satpos_.back().sat;
 			SARangeWithOffs<TSlice> sa;
 			sa.topf = sat.topf;
 			sa.len = sat.key.len;
@@ -770,9 +765,6 @@ void SwDriver::prioritizeSATups(
 				rnd,    // pseudo-random generator
 				wlm);   // metrics
 			assert(gws_.back().initialized());
-		} else {
-			satpos_.back().sai.resizeNoCopy(1);
-			satpos_.back().sai[0] = satpos2_[ri].sai[r];
 		}
 		// Initialize random selector
 		rands_.expand();
