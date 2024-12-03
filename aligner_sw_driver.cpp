@@ -75,6 +75,7 @@ bool SwDriver::eeSaTups(
     size_t maxelt,               // max elts we'll consider
 	bool all)                    // report all hits?
 {
+	const bool earlyAdvance = true; // TODO: Make it a parameter
     assert_eq(0, nelt_out);
 	gws_.clear();
 	rands_.clear();
@@ -87,7 +88,7 @@ bool SwDriver::eeSaTups(
 	if(!sh.exactRcEEHit().empty()) nobj++;
 	nobj += sh.mm1EEHits().size();
     nobj = min(nobj, maxelt);
-	gws_.ensure(nobj);
+	if (!earlyAdvance) gws_.ensure(nobj);
 	rands_.ensure(nobj);
 	satpos_.ensure(nobj);
 	eehits_.ensure(nobj);
@@ -179,18 +180,20 @@ bool SwDriver::eeSaTups(
                     satpos_.back().origSz = width;
                     rands_.expand();
                     rands_.back().init(width, all);
-                    gws_.expand();
-					SARangeWithOffs<TSlice> sa;
-					sa.topf = satpos_.back().sat.topf;
-					sa.len = satpos_.back().sat.key.len;
-					sa.offs = satpos_.back().sat.offs;
-                    gws_.back().init(
-                        ebwt,               // forward Bowtie index
-                        ref,                // reference sequences
-                        sa,                 // SATuple
-                        rnd,                // pseudo-random generator
-                        wlm);               // metrics
-                    assert(gws_.back().repOk(sa));
+		    if (!earlyAdvance) {
+	                gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = satpos_.back().sat.topf;
+			sa.len = satpos_.back().sat.key.len;
+			sa.offs = satpos_.back().sat.offs;
+                    	gws_.back().init(
+                        	ebwt,               // forward Bowtie index
+	                        ref,                // reference sequences
+        	                sa,                 // SATuple
+                	        rnd,                // pseudo-random generator
+                        	wlm);               // metrics
+	                assert(gws_.back().repOk(sa));
+		    }
                     nelt_out += width;
                     if(nelt_out >= maxelt) {
                         done = true;
@@ -268,18 +271,20 @@ bool SwDriver::eeSaTups(
                 satpos_.back().origSz = width;
                 rands_.expand();
                 rands_.back().init(width, all);
-                gws_.expand();
-				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_.back().sat.topf;
-				sa.len = satpos_.back().sat.key.len;
-				sa.offs = satpos_.back().sat.offs;
-                gws_.back().init(
-                    ebwt, // forward Bowtie index
-                    ref,  // reference sequences
-                    sa,   // SATuple
-                    rnd,  // pseudo-random generator
-                    wlm); // metrics
-                assert(gws_.back().repOk(sa));
+		if (!earlyAdvance) {
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = satpos_.back().sat.topf;
+			sa.len = satpos_.back().sat.key.len;
+			sa.offs = satpos_.back().sat.offs;
+			gws_.back().init(
+                    		ebwt, // forward Bowtie index
+                    		ref,  // reference sequences
+                   		sa,   // SATuple
+                    		rnd,  // pseudo-random generator
+                    		wlm); // metrics
+                	assert(gws_.back().repOk(sa));
+		}
                 nelt_out += width;
                 if(nelt_out >= maxelt) {
                     done = true;
@@ -626,9 +631,10 @@ void SwDriver::prioritizeSATups(
 	assert_eq(nrange, satpos.size());
 	satpos.sort();
 	if(keepWhole) {
-		gws_.ensure(nrange);
+		if (!earlyAdvance) gws_.ensure(nrange);
 		rands_.ensure(nrange);
 		for(size_t i = 0; i < nrange; i++) {
+		  if (!earlyAdvance) {
 			gws_.expand();
 			SARangeWithOffs<TSlice> sa;
 			sa.topf = satpos_.back().sat.topf;
@@ -641,15 +647,18 @@ void SwDriver::prioritizeSATups(
 				rnd,    // pseudo-random generator
 				wlm);   // metrics
 			assert(gws_.back().initialized());
+		  }
+		  {
 			rands_.expand();
 			rands_.back().init(satpos_[i].sat.size(), all);
+		  }
 		}
 		return;
 	}
 	// Resize satups_ list so that ranges having elements that we might
 	// possibly explore are present
 	satpos_.ensure(min(maxelt, nelt));
-	gws_.ensure(min(maxelt, nelt));
+	if (!earlyAdvance) gws_.ensure(min(maxelt, nelt));
 	rands_.ensure(min(maxelt, nelt));
 	rands2_.ensure(min(maxelt, nelt));
 	size_t nlarge_elts = nelt - nsmall_elts;
@@ -674,18 +683,20 @@ void SwDriver::prioritizeSATups(
 	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
 		satpos_.expand();
 		satpos_.back() = satpos2_[j];
-		gws_.expand();
-		SARangeWithOffs<TSlice> sa;
-		sa.topf = satpos_.back().sat.topf;
-		sa.len = satpos_.back().sat.key.len;
-		sa.offs = satpos_.back().sat.offs;
-		gws_.back().init(
+		if (!earlyAdvance) {
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = satpos_.back().sat.topf;
+			sa.len = satpos_.back().sat.key.len;
+			sa.offs = satpos_.back().sat.offs;
+			gws_.back().init(
 			ebwtFw, // forward Bowtie index
-			ref,    // reference sequences
-			sa,     // SA tuples: ref hit, salist range
-			rnd,    // pseudo-random generator
-			wlm);   // metrics
-		assert(gws_.back().initialized());
+				ref,    // reference sequences
+				sa,     // SA tuples: ref hit, salist range
+				rnd,    // pseudo-random generator
+				wlm);   // metrics
+			assert(gws_.back().initialized());
+		}
 		rands_.expand();
 		rands_.back().init(satpos_.back().sat.size(), all);
 		nelt_added += satpos_.back().sat.size();
@@ -733,19 +744,21 @@ void SwDriver::prioritizeSATups(
 		satpos_.back().sat = sat;
 		satpos_.back().origSz = satpos2_[ri].origSz;
 		satpos_.back().pos = satpos2_[ri].pos;
-		// Initialize GroupWalk object
-		gws_.expand();
-		SARangeWithOffs<TSlice> sa;
-		sa.topf = sat.topf;
-		sa.len = sat.key.len;
-		sa.offs = sat.offs;
-		gws_.back().init(
-			ebwtFw, // forward Bowtie index
-			ref,    // reference sequences
-			sa,     // SA tuples: ref hit, salist range
-			rnd,    // pseudo-random generator
-			wlm);   // metrics
-		assert(gws_.back().initialized());
+		if (!earlyAdvance) {
+			// Initialize GroupWalk object
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = sat.topf;
+			sa.len = sat.key.len;
+			sa.offs = sat.offs;
+			gws_.back().init(
+				ebwtFw, // forward Bowtie index
+				ref,    // reference sequences
+				sa,     // SA tuples: ref hit, salist range
+				rnd,    // pseudo-random generator
+				wlm);   // metrics
+			assert(gws_.back().initialized());
+		}
 		// Initialize random selector
 		rands_.expand();
 		rands_.back().init(1, all);
@@ -856,7 +869,7 @@ int SwDriver::extendSeeds(
 					nelt,         // out: # elements total
                     maxIters,     // max # to report
 					all);         // report all hits?
-				assert_eq(gws_.size(), rands_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
 				assert_eq(rands_.size(), satpos_.size());
 			} else {
 				eeMode = false;
@@ -889,7 +902,7 @@ int SwDriver::extendSeeds(
 					prm,           // per-read metrics
 					nelt,          // out: # elements total
 					all);          // report all hits?
-				assert_eq(gws_.size(), rands_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
 				assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				firstExtend = false;
@@ -942,7 +955,7 @@ int SwDriver::extendSeeds(
 				size_t elt = rands_[i].next(rnd);
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
-				if (earlyAdvance) {
+				if (!earlyAdvance) {
 					assert(!gws_[i].done());
 					// Resolve next element offset
 					WalkResult wr;
@@ -1547,7 +1560,7 @@ int SwDriver::extendSeedsPaired(
 					nelt,         // out: # elements total
                     maxIters,     // max elts to report
 					all);         // report all hits
-				assert_eq(gws_.size(), rands_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
 				assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				// Initialize list that contains the mate-finding failure
@@ -1587,7 +1600,7 @@ int SwDriver::extendSeedsPaired(
 					prm,           // per-read metrics
 					nelt,          // out: # elements total
 					all);          // report all hits?
-				assert_eq(gws_.size(), rands_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
 				assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				firstExtend = false;
@@ -1655,7 +1668,7 @@ int SwDriver::extendSeedsPaired(
 				size_t elt = rands_[i].next(rnd);
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
-				if (earlyAdvance) {
+				if (!earlyAdvance) {
 					assert(!gws_[i].done());
 					// Resolve next element offset
 					WalkResult wr;
