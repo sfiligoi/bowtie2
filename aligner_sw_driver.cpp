@@ -807,6 +807,7 @@ int SwDriver::extendSeeds(
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
+	const bool earlyAdvance = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
 	assert(!reportImmediately || msink != NULL);
@@ -938,26 +939,35 @@ int SwDriver::extendSeeds(
 				}
 				prm.nExIters++;
 				first = false;
-				// Resolve next element offset
-				WalkResult wr;
 				size_t elt = rands_[i].next(rnd);
-				//cerr << "elt=" << elt << endl;
-				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_[i].sat.topf;
-				sa.len = satpos_[i].sat.key.len;
-				sa.offs = satpos_[i].sat.offs;
-				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				TIndexOffU wr_toff;
+				TIndexOffU wr_len;
+				if (earlyAdvance) {
+					// Resolve next element offset
+					WalkResult wr;
+					//cerr << "elt=" << elt << endl;
+					SARangeWithOffs<TSlice> sa;
+					sa.topf = satpos_[i].sat.topf;
+					sa.len = satpos_[i].sat.key.len;
+					sa.offs = satpos_[i].sat.offs;
+					gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+					wr_toff = wr.toff;
+					wr_len  = wr.elt.len;
+				} else {
+					wr_toff = satpos_[i].sat.offs[elt];
+					wr_len  = satpos_[i].sat.key.len;
+				}
 				eltsDone++;
 				if(!eeMode) {
 					assert_gt(neltLeft, 0);
 					neltLeft--;
 				}
-				assert_neq(OFF_MASK, wr.toff);
+				assert_neq(OFF_MASK, wr_toff);
 				TIndexOffU tidx = 0, toff = 0, tlen = 0;
 				bool straddled = false;
 				ebwtFw.joinedToTextOff(
-					wr.elt.len,
-					wr.toff,
+					wr_len,
+					wr_toff,
 					tidx,
 					toff,
 					tlen,
@@ -971,8 +981,8 @@ int SwDriver::extendSeeds(
 #ifndef NDEBUG
 				if(!eeMode && !straddled) { // Check that seed hit matches reference
 					uint64_t key = satpos_[i].sat.key.seq;
-					for(size_t k = 0; k < wr.elt.len; k++) {
-						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
+					for(size_t k = 0; k < wr_len; k++) {
+						int c = ref.getBase(tidx, toff + wr_len - k - 1);
 						assert_leq(c, 3);
 						int ck = (int)(key & 3);
 						key >>= 2;
@@ -1089,7 +1099,7 @@ int SwDriver::extendSeeds(
 						swmSeed.ungapsucc++;
 					}
 				}
-				// int64_t pastedRefoff = (int64_t)wr.toff - rdoff;
+				// int64_t pastedRefoff = (int64_t)wr_toff - rdoff;
 				DPRect rect;
 				if(state == FOUND_NONE) {
 					found = dpframe.frameSeedExtensionRect(
@@ -1450,6 +1460,7 @@ int SwDriver::extendSeedsPaired(
 	bool mixed,                  // look for unpaired as well as paired alns?
 	bool& exhaustive)
 {
+	const bool earlyAdvance = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
 	assert(!reportImmediately || msink != NULL);
@@ -1640,23 +1651,32 @@ int SwDriver::extendSeedsPaired(
 				prm.nExIters++;
 				first = false;
 				assert(!gws_[i].done());
-				// Resolve next element offset
-				WalkResult wr;
 				size_t elt = rands_[i].next(rnd);
-				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_[i].sat.topf;
-				sa.len = satpos_[i].sat.key.len;
-				sa.offs = satpos_[i].sat.offs;
-				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				TIndexOffU wr_toff;
+				TIndexOffU wr_len;
+				if (earlyAdvance) {
+					// Resolve next element offset
+					WalkResult wr;
+					SARangeWithOffs<TSlice> sa;
+					sa.topf = satpos_[i].sat.topf;
+					sa.len = satpos_[i].sat.key.len;
+					sa.offs = satpos_[i].sat.offs;
+					gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+					wr_toff = wr.toff;
+					wr_len  = wr.elt.len;
+				} else {
+					wr_toff = satpos_[i].sat.offs[elt];
+					wr_len  = satpos_[i].sat.key.len;
+				}
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
-				assert_neq(OFF_MASK, wr.toff);
+				assert_neq(OFF_MASK, wr_toff);
 				TIndexOffU tidx = 0, toff = 0, tlen = 0;
 				bool straddled = false;
 				ebwtFw.joinedToTextOff(
-					wr.elt.len,
-					wr.toff,
+					wr_len,
+					wr_toff,
 					tidx,
 					toff,
 					tlen,
@@ -1670,8 +1690,8 @@ int SwDriver::extendSeedsPaired(
 #ifndef NDEBUG
 				if(!eeMode && !straddled) { // Check that seed hit matches reference
 					uint64_t key = satpos_[i].sat.key.seq;
-					for(size_t k = 0; k < wr.elt.len; k++) {
-						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
+					for(size_t k = 0; k < wr_len; k++) {
+						int c = ref.getBase(tidx, toff + wr_len - k - 1);
 						assert_leq(c, 3);
 						int ck = (int)(key & 3);
 						key >>= 2;
@@ -1784,7 +1804,7 @@ int SwDriver::extendSeedsPaired(
 						swmSeed.ungapsucc++;
 					}
 				}
-				// int64_t pastedRefoff = (int64_t)wr.toff - rdoff;
+				// int64_t pastedRefoff = (int64_t)wr_toff - rdoff;
 				DPRect rect;
 				if(state == FOUND_NONE) {
 					found = dpframe.frameSeedExtensionRect(
