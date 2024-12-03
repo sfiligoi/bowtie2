@@ -506,6 +506,7 @@ void SwDriver::prioritizeSATups(
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
+	const bool earlyAdvance = true; // TODO: Make it a parameter
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
 	satups_.clear();
@@ -559,6 +560,23 @@ void SwDriver::prioritizeSATups(
 			if(sz <= nsm) {
 				nsmall++;
 				nsmall_elts += sz;
+			}
+			if (earlyAdvance) {
+				GroupWalk2S<TSlice, 16> gws;
+				SARangeWithOffs<TSlice> sa;
+				sa.topf = satpos.back().sat.topf;
+				sa.len = satpos.back().sat.key.len;
+				sa.offs = satpos.back().sat.offs;
+				gws.init(
+					ebwtFw, // forward Bowtie index
+					ref,    // reference sequences
+					sa,     // SA tuples: ref hit, salist range
+					rnd,    // pseudo-random generator
+					wlm);   // metrics
+				for (size_t elt=0; elt<sz; elt++) {
+					WalkResult wr;
+					gws.advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				}
 			}
 			satpos.back().nlex = satpos.back().nrex = 0;
 #ifndef NDEBUG
