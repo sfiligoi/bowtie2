@@ -513,17 +513,15 @@ void SwDriver::prioritizeSATups(
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
-	const bool unrollSAT = true; // TODO: Make it a parameter
+	assert(earlyAdvance); // TODO: Implement !earlyAdvance as a separate function
+	const bool unrollSAT = true; // TODO: Implement !unrollSAT as a separate function
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
-	satups_.clear();
-	gws_.clear();
-	rands_.clear();
-	rands2_.clear();
 	satpos_.clear();
 	satpos2_.clear();
 	size_t nrange = 0, nelt = 0, nsmall = 0, nsmall_elts = 0;
-	bool keepWhole = false;
+	size_t total_elts = 0;
+	const bool keepWhole = false;
 	EList<SATupleAndPos, 16>& satpos = keepWhole ? satpos_ : satpos2_;
 	for(size_t i = 0; i < nonz; i++) {
 		bool fw = true;
@@ -532,6 +530,7 @@ void SwDriver::prioritizeSATups(
 		assert(qv.valid());
 		assert(!qv.empty());
 		assert(qv.repOk(ca.current()));
+		satups_.clear(); // satups_ is local to the loop, but using the global one to reuse the memory
 		ca.queryQval(qv, satups_, nrange, nelt);
 		for(size_t j = 0; j < satups_.size(); j++) {
 			const size_t sz = satups_[j].size();
@@ -568,6 +567,7 @@ void SwDriver::prioritizeSATups(
 				nsmall++;
 				nsmall_elts += sz;
 			}
+			total_elts += sz;
 			if (earlyAdvance) {
 				GroupWalk2S<TSlice, 16> gws;
 				SARangeWithOffs<TSlice> sa;
@@ -637,86 +637,24 @@ void SwDriver::prioritizeSATups(
 				range.back().sz = sz;
 			}
 		}
-		satups_.clear();
 	}
 	assert_leq(nsmall, nrange);
 	nelt_out = nelt; // return the total number of elements
 	assert_eq(nrange, satpos.size());
-	satpos.sort();
-	if(keepWhole && (!unrollSAT)) {
-		// TODO: Add support for unrollSAT
-		if (!earlyAdvance) gws_.ensure(nrange);
-		rands_.ensure(nrange);
-		for(size_t i = 0; i < nrange; i++) {
-		  if (!earlyAdvance) {
-			gws_.expand();
-			SARangeWithOffs<TSlice> sa;
-			sa.topf = satpos_.back().sat.topf;
-			sa.len = satpos_.back().sat.key.len;
-			sa.offs = satpos_.back().sat.offs;
-			gws_.back().init(
-				ebwtFw, // forward Bowtie index
-				ref,    // reference sequences
-				sa,     // SA tuples: ref hit, salist range
-				rnd,    // pseudo-random generator
-				wlm);   // metrics
-			assert(gws_.back().initialized());
-		  }
-		  {
-			rands_.expand();
-			rands_.back().init(satpos_[i].sat.size(), all);
-		  }
-		}
-		return;
-	}
 	// Resize satups_ list so that ranges having elements that we might
 	// possibly explore are present
-	satpos_.ensure(min(maxelt, nelt));
-	if (!earlyAdvance) gws_.ensure(min(maxelt, nelt));
-	if (!unrollSAT) rands_.ensure(min(maxelt, nelt));
-	rands2_.ensure(min(maxelt, nelt));
-	size_t nlarge_elts = nelt - nsmall_elts;
-	if(maxelt < nelt) {
-		size_t diff = nelt - maxelt;
-		if(diff >= nlarge_elts) {
-			nlarge_elts = 0;
-		} else {
-			nlarge_elts -= diff;
-		}
-	}
+	satpos_.ensure(total_elts);
 	size_t nelt_added = 0;
 	// Now we have a collection of ranges in satpos2_.  Now we want to decide
-	// how we explore elements from them.  The basic idea is that: for very
-	// small guys, where "very small" means that the size of the range is less
-	// than or equal to the parameter 'nsz', we explore them in their entirety
-	// right away.  For the rest, we want to select in a way that is (a)
-	// random, and (b) weighted toward examining elements from the smaller
-	// ranges more frequently (and first).
-	//
-	// 1. do the smalls
+	// how we explore elements from them. 
 
-	// Assume unrollSAT==true
-	// TODO: Add back support for unrollSAT==false
-	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
+	// We first unroll all of satpos2_ into single-element satpos_.
+
+	for(size_t j = 0; j < satpos2_.size(); j++) {
 	   const size_t sz = satpos2_[j].sat.offs.size();
 	   for(size_t elt=0; elt<sz; elt++) {
 		satpos_.expand();
 		satpos_.back().init(satpos2_[j],elt,earlyAdvance);
-		if (!earlyAdvance) {
-			gws_.expand();
-			SATuple& sat = satpos_.back().sat;
-			SARangeWithOffs<TSlice> sa;
-			sa.topf = sat.topf;
-			sa.len = sat.key.len;
-			sa.offs = sat.offs;
-			gws_.back().init(
-				ebwtFw, // forward Bowtie index
-				ref,    // reference sequences
-				sa,     // SA tuples: ref hit, salist range
-				rnd,    // pseudo-random generator
-				wlm);   // metrics
-			assert(gws_.back().initialized());
-		}
 		nelt_added ++;
 #ifndef NDEBUG
 		for(size_t k = 0; k < satpos_.size()-1; k++) {
@@ -725,61 +663,22 @@ void SwDriver::prioritizeSATups(
 #endif
 	   }
 	}
-	if(nelt_added >= maxelt || nsmall == satpos2_.size()) {
-		nelt_out = nelt_added;
-		return;
+	if (nelt_added!=total_elts) fprintf(stderr,"Uh oh %li!=%li\n",long(nelt_added),long(total_elts));
+	assert(nelt_added==total_elts);
+
+	// we will keep only up to maxelt
+	if (nelt_added>maxelt) nelt_added = maxelt;
+	// We randomly swap element with N-index to get a proper random mix
+	for (size_t j = 0; (j < nelt_added); j++) {
+		size_t remaining_els = total_elts-j; // picking myself is allowed
+		uint32_t ir = rnd.nextU32();
+		size_t victim = j+size_t((1.0/(65536.0*65536.0))*ir*remaining_els);
+		assert(victim<total_elts);
+		if (victim<total_elts) {
+		if (victim!=j) std::swap(satpos_[j],satpos_[victim]);
+		} else fprintf(stderr,"LOGIC ERROR: ! %li<%li\n",long(victim),long(total_elts));
 	}
-	// 2. do the non-smalls
-	// Initialize the row sampler
-	rowsamp_.init(satpos2_, nsmall, satpos2_.size(), lensq, szsq);
-	// Initialize the random choosers
-	rands2_.resize(satpos2_.size());
-	for(size_t j = 0; j < satpos2_.size(); j++) {
-		rands2_[j].reset();
-	}
-	while(nelt_added < maxelt && nelt_added < nelt) {
-		// Pick a non-small range to sample from
-		size_t ri = rowsamp_.next(rnd) + nsmall;
-		assert_geq(ri, nsmall);
-		assert_lt(ri, satpos2_.size());
-		// Initialize random element chooser for that range
-		if(!rands2_[ri].inited()) {
-			rands2_[ri].init(satpos2_[ri].sat.size(), all);
-			assert(!rands2_[ri].done());
-		}
-		assert(!rands2_[ri].done());
-		// Choose an element from the range
-		size_t r = rands2_[ri].next(rnd);
-		if(rands2_[ri].done()) {
-			// Tell the row sampler this range is done
-			rowsamp_.finishedRange(ri - nsmall);
-		}
-		// Add the element to the satpos_ list
-		satpos_.expand();
-		satpos_.back().init(satpos2_[ri],r,earlyAdvance);
-		if (!earlyAdvance) {
-			// Initialize GroupWalk object
-			gws_.expand();
-			SATuple& sat = satpos_.back().sat;
-			SARangeWithOffs<TSlice> sa;
-			sa.topf = sat.topf;
-			sa.len = sat.key.len;
-			sa.offs = sat.offs;
-			gws_.back().init(
-				ebwtFw, // forward Bowtie index
-				ref,    // reference sequences
-				sa,     // SA tuples: ref hit, salist range
-				rnd,    // pseudo-random generator
-				wlm);   // metrics
-			assert(gws_.back().initialized());
-		}
-		if (!unrollSAT) { // not needed else
-			// Initialize random selector
-			rands_.expand();
-			rands_.back().init(1, all);
-		}
-		nelt_added++;
-	}
+
 	nelt_out = nelt_added;
 	return;
 }
@@ -888,8 +787,8 @@ int SwDriver::extendSeeds(
 					nelt,         // out: # elements total
                     maxIters,     // max # to report
 					all);         // report all hits?
-				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
-				assert_eq(rands_.size(), satpos_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), satpos_.size());
+				if (!unrollSAT) assert_eq(rands_.size(), satpos_.size());
 			} else {
 				eeMode = false;
 			}
@@ -923,8 +822,8 @@ int SwDriver::extendSeeds(
 					prm,           // per-read metrics
 					nelt,          // out: # elements total
 					all);          // report all hits?
-				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
-				assert_eq(rands_.size(), satpos_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), satpos_.size());
+				if (!unrollSAT) assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				firstExtend = false;
 			}
@@ -1591,8 +1490,8 @@ int SwDriver::extendSeedsPaired(
 					nelt,         // out: # elements total
                     maxIters,     // max elts to report
 					all);         // report all hits
-				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
-				assert_eq(rands_.size(), satpos_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), satpos_.size());
+				if (!unrollSAT) assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				// Initialize list that contains the mate-finding failure
 				// streak for each range
@@ -1633,8 +1532,8 @@ int SwDriver::extendSeedsPaired(
 					prm,           // per-read metrics
 					nelt,          // out: # elements total
 					all);          // report all hits?
-				if (!earlyAdvance) assert_eq(gws_.size(), rands_.size());
-				assert_eq(rands_.size(), satpos_.size());
+				if (!earlyAdvance) assert_eq(gws_.size(), satpos_.size());
+				if (!unrollSAT) assert_eq(rands_.size(), satpos_.size());
 				neltLeft = nelt;
 				firstExtend = false;
 				mateStreaks_.resize(satpos_.size());
