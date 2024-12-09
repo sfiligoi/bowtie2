@@ -693,16 +693,19 @@ void SwDriver::prioritizeSATups(
 	//
 	// 1. do the smalls
 	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
+	   const size_t sz = satpos2_[j].sat.offs.size();
+	   for(size_t elt=0; elt<sz; elt++) {
 		satpos_.expand();
-		satpos_.back() = satpos2_[j];
+		satpos_.back().init(satpos2_[j],elt,earlyAdvance);
 		if (!earlyAdvance) {
 			gws_.expand();
+			SATuple& sat = satpos_.back().sat;
 			SARangeWithOffs<TSlice> sa;
-			sa.topf = satpos_.back().sat.topf;
-			sa.len = satpos_.back().sat.key.len;
-			sa.offs = satpos_.back().sat.offs;
+			sa.topf = sat.topf;
+			sa.len = sat.key.len;
+			sa.offs = sat.offs;
 			gws_.back().init(
-			ebwtFw, // forward Bowtie index
+				ebwtFw, // forward Bowtie index
 				ref,    // reference sequences
 				sa,     // SA tuples: ref hit, salist range
 				rnd,    // pseudo-random generator
@@ -710,13 +713,14 @@ void SwDriver::prioritizeSATups(
 			assert(gws_.back().initialized());
 		}
 		rands_.expand();
-		rands_.back().init(satpos_.back().sat.size(), all);
-		nelt_added += satpos_.back().sat.size();
+		rands_.back().init(1, all);
+		nelt_added ++;
 #ifndef NDEBUG
 		for(size_t k = 0; k < satpos_.size()-1; k++) {
 			assert(!(satpos_[k] == satpos_.back()));
 		}
 #endif
+	   }
 	}
 	if(nelt_added >= maxelt || nsmall == satpos2_.size()) {
 		nelt_out = nelt_added;
