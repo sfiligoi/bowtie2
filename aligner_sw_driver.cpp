@@ -513,7 +513,6 @@ void SwDriver::prioritizeSATups(
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
-	assert(earlyAdvance); // TODO: Implement !earlyAdvance as a separate function
 	const bool unrollSAT = true; // TODO: Implement !unrollSAT as a separate function
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
@@ -663,20 +662,36 @@ void SwDriver::prioritizeSATups(
 #endif
 	   }
 	}
-	if (nelt_added!=total_elts) fprintf(stderr,"Uh oh %li!=%li\n",long(nelt_added),long(total_elts));
 	assert(nelt_added==total_elts);
 
 	// we will keep only up to maxelt
 	if (nelt_added>maxelt) nelt_added = maxelt;
+	if (!earlyAdvance) {
+		gws_.clear();
+		gws_.ensure(nelt_added);
+	}
+
 	// We randomly swap element with N-index to get a proper random mix
 	for (size_t j = 0; (j < nelt_added); j++) {
 		size_t remaining_els = total_elts-j; // picking myself is allowed
 		uint32_t ir = rnd.nextU32();
 		size_t victim = j+size_t((1.0/(65536.0*65536.0))*ir*remaining_els);
 		assert(victim<total_elts);
-		if (victim<total_elts) {
 		if (victim!=j) std::swap(satpos_[j],satpos_[victim]);
-		} else fprintf(stderr,"LOGIC ERROR: ! %li<%li\n",long(victim),long(total_elts));
+		if (!earlyAdvance) {
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = satpos_[j].sat.topf;
+			sa.len = satpos_[j].sat.key.len;
+			sa.offs = satpos_[j].sat.offs;
+			gws_.back().init(
+				ebwtFw, // forward Bowtie index
+				ref,    // reference sequences
+				sa,     // SA tuples: ref hit, salist range
+				rnd,    // pseudo-random generator
+				wlm);   // metrics
+			assert(gws_.back().initialized());
+		}
 	}
 
 	nelt_out = nelt_added;
@@ -735,7 +750,7 @@ int SwDriver::extendSeeds(
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
-	const bool earlyAdvance = true; // TODO: Make it a parameter
+	const bool earlyAdvance = false; // TODO: Make it a parameter
 	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
@@ -1401,7 +1416,7 @@ int SwDriver::extendSeedsPaired(
 	bool mixed,                  // look for unpaired as well as paired alns?
 	bool& exhaustive)
 {
-	const bool earlyAdvance = true; // TODO: Make it a parameter
+	const bool earlyAdvance = false; // TODO: Make it a parameter
 	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
