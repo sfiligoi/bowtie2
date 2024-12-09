@@ -534,13 +534,13 @@ protected:
 		bool all);                   // report all hits?
 
 	Random1toN               rand_;    // random number generators
-	EList<Random1toN, 16>    rands_;   // random number generators
+	EList<Random1toN, 16>    rands_;   // random number generators, only valid if !unrollSAT
 	EList<Random1toN, 16>    rands2_;  // random number generators
 	EList<EEHit, 16>         eehits_;  // holds end-to-end hits
 	EList<SATupleAndPos, 16> satpos_;  // holds SATuple, SeedPos pairs
 	EList<SATupleAndPos, 16> satpos2_; // holds SATuple, SeedPos pairs
 	EList<SATuple, 16>       satups_;  // holds SATuples to explore elements from
-	EList<GroupWalk2S<TSlice, 16> > gws_;   // list of GroupWalks; no particular order
+	EList<GroupWalk2S<TSlice, 16> > gws_;   // list of GroupWalks; no particular order, only valid if !earlyAdvance
 	EList<size_t>            mateStreaks_; // mate-find fail streaks
 	RowSampler               rowsamp_;     // row sampler
 	

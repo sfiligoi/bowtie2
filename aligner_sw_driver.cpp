@@ -513,6 +513,7 @@ void SwDriver::prioritizeSATups(
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
+	const bool unrollSAT = true; // TODO: Make it a parameter
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
 	satups_.clear();
@@ -642,7 +643,8 @@ void SwDriver::prioritizeSATups(
 	nelt_out = nelt; // return the total number of elements
 	assert_eq(nrange, satpos.size());
 	satpos.sort();
-	if(keepWhole) {
+	if(keepWhole && (!unrollSAT)) {
+		// TODO: Add support for unrollSAT
 		if (!earlyAdvance) gws_.ensure(nrange);
 		rands_.ensure(nrange);
 		for(size_t i = 0; i < nrange; i++) {
@@ -671,7 +673,7 @@ void SwDriver::prioritizeSATups(
 	// possibly explore are present
 	satpos_.ensure(min(maxelt, nelt));
 	if (!earlyAdvance) gws_.ensure(min(maxelt, nelt));
-	rands_.ensure(min(maxelt, nelt));
+	if (!unrollSAT) rands_.ensure(min(maxelt, nelt));
 	rands2_.ensure(min(maxelt, nelt));
 	size_t nlarge_elts = nelt - nsmall_elts;
 	if(maxelt < nelt) {
@@ -692,6 +694,9 @@ void SwDriver::prioritizeSATups(
 	// ranges more frequently (and first).
 	//
 	// 1. do the smalls
+
+	// Assume unrollSAT==true
+	// TODO: Add back support for unrollSAT==false
 	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
 	   const size_t sz = satpos2_[j].sat.offs.size();
 	   for(size_t elt=0; elt<sz; elt++) {
@@ -712,8 +717,6 @@ void SwDriver::prioritizeSATups(
 				wlm);   // metrics
 			assert(gws_.back().initialized());
 		}
-		rands_.expand();
-		rands_.back().init(1, all);
 		nelt_added ++;
 #ifndef NDEBUG
 		for(size_t k = 0; k < satpos_.size()-1; k++) {
@@ -770,9 +773,11 @@ void SwDriver::prioritizeSATups(
 				wlm);   // metrics
 			assert(gws_.back().initialized());
 		}
-		// Initialize random selector
-		rands_.expand();
-		rands_.back().init(1, all);
+		if (!unrollSAT) { // not needed else
+			// Initialize random selector
+			rands_.expand();
+			rands_.back().init(1, all);
+		}
 		nelt_added++;
 	}
 	nelt_out = nelt_added;
@@ -832,6 +837,7 @@ int SwDriver::extendSeeds(
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
 	const bool earlyAdvance = true; // TODO: Make it a parameter
+	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
 	assert(!reportImmediately || msink != NULL);
@@ -868,6 +874,8 @@ int SwDriver::extendSeeds(
 	while(true) {
 		if(eeMode) {
 			if(firstEe) {
+				fprintf(stderr, "WARNING: Unsupported eeSaTups path hit!\n");
+				// TODO: Fix this
 				firstEe = false;
 				eeMode = eeSaTups(
 					rd,           // read
@@ -945,7 +953,8 @@ int SwDriver::extendSeeds(
 			// range is large, just investigate one and move on - we might come
 			// back to this range later.
 			size_t riter = 0;
-			while(!rands_[i].done() && (first || is_small || eeMode)) {
+			while(  ( unrollSAT ? (satpos_[i].sat.size()>0) : (!rands_[i].done()) ) && 
+				( first || is_small || eeMode ) ) {
 				riter++;
 				if(minsc == perfectScore) {
 					if(!eeMode || eehits_[i].score < perfectScore) {
@@ -965,7 +974,8 @@ int SwDriver::extendSeeds(
 				}
 				prm.nExIters++;
 				first = false;
-				size_t elt = rands_[i].next(rnd);
+				if (!((!unrollSAT) || satpos_[i].sat.size()==1)) fprintf(stderr, "Error!\n");
+				size_t elt = unrollSAT ? 0 : rands_[i].next(rnd); // there is only one element is unrollSAT==true
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
 				TIndexOffU tidx = 0, toff = 0, tlen = 0;
@@ -998,6 +1008,7 @@ int SwDriver::extendSeeds(
 					tlen = satpos_[i].sai[elt].tlen;
 					straddled = satpos_[i].sai[elt].straddled;
 				}
+				if (unrollSAT) satpos_[i].sat.reset(); // mark as completed, so we do not reuse it
 				eltsDone++;
 				if(!eeMode) {
 					assert_gt(neltLeft, 0);
@@ -1010,7 +1021,7 @@ int SwDriver::extendSeeds(
 					continue;
 				}
 #ifndef NDEBUG
-				if(!eeMode && !straddled) { // Check that seed hit matches reference
+				if(!eeMode && !straddled && !unrollSAT) { // Check that seed hit matches reference
 					uint64_t key = satpos_[i].sat.key.seq;
 					for(size_t k = 0; k < wr_len; k++) {
 						int c = ref.getBase(tidx, toff + wr_len - k - 1);
@@ -1492,6 +1503,7 @@ int SwDriver::extendSeedsPaired(
 	bool& exhaustive)
 {
 	const bool earlyAdvance = true; // TODO: Make it a parameter
+	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
 	assert(!reportImmediately || msink != NULL);
@@ -1565,6 +1577,8 @@ int SwDriver::extendSeedsPaired(
 	while(true) {
 		if(eeMode) {
 			if(firstEe) {
+				fprintf(stderr, "WARNING: Unsupported eeSaTups path hit!\n");
+				// TODO: Fix this
 				firstEe = false;
 				eeMode = eeSaTups(
 					rd,           // read
@@ -1650,7 +1664,8 @@ int SwDriver::extendSeedsPaired(
 			// If the range is small, investigate all elements now.  If the
 			// range is large, just investigate one and move on - we might come
 			// back to this range later.
-			while(!rands_[i].done() && (first || is_small || eeMode)) {
+			while(  ( unrollSAT ? (satpos_[i].sat.size()>0) : (!rands_[i].done()) ) && 
+				( first || is_small || eeMode ) ) {
 				if(minsc == perfectScore) {
 					if(!eeMode || eehits_[i].score < perfectScore) {
 						return EXTEND_PERFECT_SCORE;
@@ -1678,13 +1693,17 @@ int SwDriver::extendSeedsPaired(
 				}
 				if(mateStreaks_[i] >= maxMateStreak) {
 					// Don't try this seed range anymore
-					rands_[i].setDone();
-					assert(rands_[i].done());
+					if (unrollSAT) {
+						satpos_[i].sat.reset();
+					} else {
+						rands_[i].setDone();
+					}
 					break;
 				}
 				prm.nExIters++;
 				first = false;
-				size_t elt = rands_[i].next(rnd);
+				if (!((!unrollSAT) || satpos_[i].sat.size()==1)) fprintf(stderr, "Error!\n");
+				size_t elt = unrollSAT ? 0 : rands_[i].next(rnd); // there is only one element is unrollSAT==true
 				TIndexOffU wr_toff;
 				TIndexOffU wr_len;
 				TIndexOffU tidx = 0, toff = 0, tlen = 0;
@@ -1716,6 +1735,7 @@ int SwDriver::extendSeedsPaired(
 					tlen = satpos_[i].sai[elt].tlen;
 					straddled = satpos_[i].sai[elt].straddled;
 				}
+				if (unrollSAT) satpos_[i].sat.reset(); // mark as completed, so we do not reuse it
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
@@ -1726,7 +1746,7 @@ int SwDriver::extendSeedsPaired(
 					continue;
 				}
 #ifndef NDEBUG
-				if(!eeMode && !straddled) { // Check that seed hit matches reference
+				if(!eeMode && !straddled && !unrollSAT) { // Check that seed hit matches reference
 					uint64_t key = satpos_[i].sat.key.seq;
 					for(size_t k = 0; k < wr_len; k++) {
 						int c = ref.getBase(tidx, toff + wr_len - k - 1);
