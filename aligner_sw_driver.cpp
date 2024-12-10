@@ -751,7 +751,7 @@ int SwDriver::extendSeeds(
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
-	const bool earlyAdvance = false; // TODO: Make it a parameter
+	const bool earlyAdvance = true; // TODO: Make it a parameter
 	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
@@ -1424,7 +1424,7 @@ int SwDriver::extendSeedsPaired(
 	bool mixed,                  // look for unpaired as well as paired alns?
 	bool& exhaustive)
 {
-	const bool earlyAdvance = false; // TODO: Make it a parameter
+	const bool earlyAdvance = true; // TODO: Make it a parameter
 	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
