@@ -755,6 +755,13 @@ int SwDriver::extendSeeds(
 	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
 
+	// HACK
+	maxIters = 1000000;
+	maxUg = 1000000;
+	maxDp = 1000000;
+	maxUgStreak = 1000000;
+	maxDpStreak = 1000000;
+
 	assert(!reportImmediately || msink != NULL);
 	assert(!reportImmediately || !msink->maxed());
 
@@ -1420,6 +1427,13 @@ int SwDriver::extendSeedsPaired(
 	const bool earlyAdvance = false; // TODO: Make it a parameter
 	const bool unrollSAT = true; // TODO: Make it a parameter
 	bool all = msink->allHits();
+
+	// HACK
+	maxIters = 1000000;
+	maxUg = 1000000;
+	maxDp = 1000000;
+	maxUgStreak = 1000000;
+	maxDpStreak = 1000000;
 
 	assert(!reportImmediately || msink != NULL);
 	assert(!reportImmediately || !msink->maxed());
