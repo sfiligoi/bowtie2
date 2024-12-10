@@ -693,6 +693,7 @@ void SwDriver::prioritizeSATups(
 			assert(gws_.back().initialized());
 		}
 	}
+	satpos_.resize(nelt_added); // discard all other elements
 
 	nelt_out = nelt_added;
 	return;
