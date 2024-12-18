@@ -1297,10 +1297,12 @@ int SwDriver::extendSeeds(
 }
 
 //same as above, but assuming eeHits==0 -> eeMode=False
-int SwDriver::extendSeedsNoEE(
+//and with seeds already prioritied
+int SwDriver::extendPrioSeedsNoEE(
 	Read& rd,                    // read to align
 	bool mate1,                  // true iff rd is mate #1
-	SeedResults& sh,             // seed hits to extend into full alignments
+	const size_t nsm,            // smallness threshold
+	const size_t nelt,           // # elements total
 	const Ebwt& ebwtFw,          // BWT
 	const Ebwt* ebwtBw,          // BWT'
 	const BitPairReference& ref, // Reference strings
@@ -1318,13 +1320,11 @@ int SwDriver::extendSeedsNoEE(
 	size_t maxDp,                // stop after this many dps
 	size_t maxUgStreak,          // stop after streak of this many ungap fails
 	size_t maxDpStreak,          // stop after streak of this many dp fails
-	bool doExtend,               // do seed extension
 	bool enable8,                // use 8-bit SSE where possible
 	size_t cminlen,              // use checkpointer if read longer than this
 	size_t cpow2,                // interval between diagonals to checkpoint
 	bool doTri,                  // triangular mini-fills?
 	int tighten,                 // -M score tightening mode
-	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random source
 	WalkMetrics& wlm,            // group walk left metrics
 	SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -1333,8 +1333,6 @@ int SwDriver::extendSeedsNoEE(
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
-	bool all = msink->allHits();
-
 	assert(!reportImmediately || msink != NULL);
 	assert(!reportImmediately || !msink->maxed());
 
@@ -1350,15 +1348,6 @@ int SwDriver::extendSeedsNoEE(
 
 	// Initialize a set of GroupWalks, one for each seed.  Also, intialize the
 	// accompanying lists of reference seed hits (satups*)
-	const size_t nsm = 5;
-	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
-	assert(sh.numE2eHits()==0);
-	//size_t eeHits = sh.numE2eHits();
-	//bool eeMode = eeHits > 0;
-
-	if(nonz == 0) {
-		return EXTEND_EXHAUSTED_CANDIDATES; // No seed hits!  Bail.
-	}
 
 	// Reset all the counters related to streaks
 	prm.nEeFail = 0;
@@ -1368,25 +1357,6 @@ int SwDriver::extendSeedsNoEE(
 	size_t neltLeft = 0, eltsDone = 0;
 	const size_t rows = rdlen;
 	{
-		size_t nelt = 0;
-		prioritizeSATups(
-			rd,            // read
-			sh,            // seed hits to extend into full alignments
-			ebwtFw,        // BWT
-			ebwtBw,        // BWT'
-			ref,           // Reference strings
-			seedmms,       // # seed mismatches allowed
-			maxIters,      // max rows to consider per position
-			doExtend,      // extend out seeds
-			true,          // square extended length
-			true,          // square SA range size
-			nsm,           // smallness threshold
-			ca,            // alignment cache for seed hits
-			rnd,           // pseudo-random generator
-			wlm,           // group walk left metrics
-			prm,           // per-read metrics
-			nelt,          // out: # elements total
-			all);          // report all hits?
 		assert_eq(gws_.size(), rands_.size());
 		assert_eq(gws_.size(), satpos_.size());
 		neltLeft = nelt;
@@ -2867,12 +2837,14 @@ int SwDriver::extendSeedsPaired(
 }
 
 //same as above, but assuming eeHits==0 -> eeMode=False
-int SwDriver::extendSeedsPairedNoEE(
+//and with seeds already prioritied
+int SwDriver::extendPrioSeedsPairedNoEE(
 	Read& rd,                    // mate to align as anchor
 	Read& ord,                   // mate to align as opposite
 	bool anchor1,                // true iff anchor mate is mate1
 	bool oppFilt,                // true iff opposite mate was filtered out
-	SeedResults& sh,             // seed hits for anchor
+	const size_t nsm,            // smallness threshold
+	const size_t nelt,           // # elements total
 	const Ebwt& ebwtFw,          // BWT
 	const Ebwt* ebwtBw,          // BWT'
 	const BitPairReference& ref, // Reference strings
@@ -2898,13 +2870,11 @@ int SwDriver::extendSeedsPairedNoEE(
 	size_t maxUgStreak,          // stop after streak of this many ungap fails
 	size_t maxDpStreak,          // stop after streak of this many dp fails
 	size_t maxMateStreak,        // stop seed range after N mate-find fails
-	bool doExtend,               // do seed extension
 	bool enable8,                // use 8-bit SSE where possible
 	size_t cminlen,              // use checkpointer if read longer than this
 	size_t cpow2,                // interval between diagonals to checkpoint
 	bool doTri,                  // triangular mini-fills?
 	int tighten,                 // -M score tightening mode
-	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random source
 	WalkMetrics& wlm,            // group walk left metrics
 	SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -2917,8 +2887,6 @@ int SwDriver::extendSeedsPairedNoEE(
 	bool mixed,                  // look for unpaired as well as paired alns?
 	bool& exhaustive)
 {
-	bool all = msink->allHits();
-
 	assert(!reportImmediately || msink != NULL);
 	assert(!reportImmediately || !msink->maxed());
 	assert(!msink->state().doneWithMate(anchor1));
@@ -2971,16 +2939,6 @@ int SwDriver::extendSeedsPairedNoEE(
 
 	// Initialize a set of GroupWalks, one for each seed.  Also, intialize the
 	// accompanying lists of reference seed hits (satups*)
-	const size_t nsm = 5;
-	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
-	assert(sh.numE2eHits()==0);
-	//size_t eeHits = sh.numE2eHits();
-	//bool eeMode = eeHits > 0;
-
-	if(nonz == 0) {
-		// No seed hits!  Bail.
-		return EXTEND_EXHAUSTED_CANDIDATES;
-	}
 
 	// Reset all the counters related to streaks
 	prm.nEeFail = 0;
@@ -2991,31 +2949,12 @@ int SwDriver::extendSeedsPairedNoEE(
 	const size_t rows = rdlen;
 	const size_t orows  = ordlen;
 	{
-		size_t nelt = 0;
-		prioritizeSATups(
-			rd,            // read
-			sh,            // seed hits to extend into full alignments
-			ebwtFw,        // BWT
-			ebwtBw,        // BWT'
-			ref,           // Reference strings
-			seedmms,       // # seed mismatches allowed
-			maxIters,      // max rows to consider per position
-			doExtend,      // extend out seeds
-			true,          // square extended length
-			true,          // square SA range size
-			nsm,           // smallness threshold
-			ca,            // alignment cache for seed hits
-			rnd,           // pseudo-random generator
-			wlm,           // group walk left metrics
-			prm,           // per-read metrics
-			nelt,          // out: # elements total
-			all);          // report all hits?
 		assert_eq(gws_.size(), rands_.size());
 		assert_eq(gws_.size(), satpos_.size());
 		neltLeft = nelt;
-		mateStreaks_.resize(gws_.size());
-		mateStreaks_.fill(0);
 	}
+	mateStreaks_.resize(gws_.size());
+	mateStreaks_.fill(0);
 
 	while(neltLeft>0) {
 		if(msink->Mmode() && minsc == perfectScore) {

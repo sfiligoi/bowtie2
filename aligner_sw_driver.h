@@ -356,10 +356,12 @@ public:
 		bool& exhaustive);
 
 	//same as above, but assuming eeHits==0 -> eeMode=False
-	int extendSeedsNoEE(
+	//and with seeds already prioritied
+	int extendPrioSeedsNoEE(
 		Read& rd,                    // read to align
 		bool mate1,                  // true iff rd is mate #1
-		SeedResults& sh,             // seed hits to extend into full alignments
+		const size_t nsm,            // smallness threshold
+		const size_t nelt,           // # elements total
 		const Ebwt& ebwtFw,          // BWT
 		const Ebwt* ebwtBw,          // BWT'
 		const BitPairReference& ref, // Reference strings
@@ -377,13 +379,11 @@ public:
 		size_t maxDp,                // max # DPs
 		size_t maxUgStreak,          // stop after streak of this many ungap fails
 		size_t maxDpStreak,          // stop after streak of this many dp fails
-		bool doExtend,               // do seed extension
 		bool enable8,                // use 8-bit SSE where possible
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
 		int tighten,                 // -M score tightening mode
-		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -454,12 +454,14 @@ public:
 		bool& exhaustive);
 
 	//same as above, but assuming eeHits==0 -> eeMode=False
-	int extendSeedsPairedNoEE(
+	//and with seeds already prioritied
+	int extendPrioSeedsPairedNoEE(
 		Read& rd,                    // mate to align as anchor
 		Read& ord,                   // mate to align as opposite
 		bool anchor1,                // true iff anchor mate is mate1
 		bool oppFilt,                // true iff opposite mate was filtered out
-		SeedResults& sh,             // seed hits for anchor
+		const size_t nsm,            // smallness threshold
+		const size_t nelt,           // # elements total
 		const Ebwt& ebwtFw,          // BWT
 		const Ebwt* ebwtBw,          // BWT'
 		const BitPairReference& ref, // Reference strings
@@ -485,13 +487,11 @@ public:
 		size_t maxUgStreak,          // stop after streak of this many ungap fails
 		size_t maxDpStreak,          // stop after streak of this many dp fails
 		size_t maxMateStreak,        // stop seed range after N mate-find fails
-		bool doExtend,               // do seed extension
 		bool enable8,                // use 8-bit SSE where possible
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
 		int tighten,                 // -M score tightening mode
-		AlignmentCacheIface& cs,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -528,6 +528,29 @@ public:
 		redAnchor_.init(maxlen);
 	}
 
+	/**
+	 * Given seed results, set up all of our state for resolving and keeping
+	 * track of reference offsets for hits.
+	 */
+	void prioritizeSATups(
+		const Read& rd,              // read
+		SeedResults& sh,             // seed hits to extend into full alignments
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT'
+		const BitPairReference& ref, // Reference strings
+		int seedmms,                 // # seed mismatches allowed
+		size_t maxelt,               // max elts we'll consider
+		bool doExtend,               // extend out seeds
+		bool lensq,                  // square extended length
+		bool szsq,                   // square SA range size
+		size_t nsm,                  // if range as <= nsm elts, it's "small"
+		AlignmentCacheIface& ca,     // alignment cache for seed hits
+		RandomSource& rnd,           // pseudo-random generator
+		WalkMetrics& wlm,            // group walk left metrics
+		PerReadMetrics& prm,         // per-read metrics
+		size_t& nelt_out,            // out: # elements total
+		bool all);                   // report all hits?
+
 protected:
 
 	bool eeSaTups(
@@ -556,25 +579,6 @@ protected:
 		PerReadMetrics& prm,  // per-read metrics
 		size_t& nlex,         // # positions we can extend to left w/o edit
 		size_t& nrex);        // # positions we can extend to right w/o edit
-
-	void prioritizeSATups(
-		const Read& rd,              // read
-		SeedResults& sh,             // seed hits to extend into full alignments
-		const Ebwt& ebwtFw,          // BWT
-		const Ebwt* ebwtBw,          // BWT'
-		const BitPairReference& ref, // Reference strings
-		int seedmms,                 // # seed mismatches allowed
-		size_t maxelt,               // max elts we'll consider
-		bool doExtend,               // extend out seeds
-		bool lensq,                  // square extended length
-		bool szsq,                   // square SA range size
-		size_t nsm,                  // if range as <= nsm elts, it's "small"
-		AlignmentCacheIface& ca,     // alignment cache for seed hits
-		RandomSource& rnd,           // pseudo-random generator
-		WalkMetrics& wlm,            // group walk left metrics
-		PerReadMetrics& prm,         // per-read metrics
-		size_t& nelt_out,            // out: # elements total
-		bool all);                   // report all hits?
 
 	Random1toN               rand_;    // random number generators
 	EList<Random1toN, 16>    rands_;   // random number generators

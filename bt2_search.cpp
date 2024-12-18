@@ -4705,16 +4705,41 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									continue; // on to the next mate
 								}
 								// Sort seed hits into ranks
-								shs[mate].rankSeedHits(rnd, msinkwrap.allHits());
+								const bool all = msinkwrap.allHits();
+								shs[mate].rankSeedHits(rnd, all);
+								const size_t nsm = 5; // smallness threshold
+								size_t nelt = 0;
+								sd.prioritizeSATups(
+										*rds[mate],     // read
+										shs[mate],      // seed hits to extend into full alignments
+										ebwtFw,         // bowtie index
+										ebwtBw,         // rev bowtie index
+										ref,            // packed reference strings
+										multiseedMms,   // # mms allowed in a seed
+										mxIter[mate],   // max extend loop iters
+										doExtend,       // extend seed hits
+										true,          // square extended length
+										true,          // square SA range size
+										nsm,           // smallness threshold
+										ca,             // seed alignment cache
+										rnd,            // pseudo-random source
+										wlm,            // group walk left metrics
+										prm,            // per-read metrics
+										nelt,          // out: # elements total
+										all);          // report all hits?
 								int ret = 0;
-								if(paired) {
+								if (shs[mate].nonzeroOffsets()==0) {
+									// No seed hits!  Bail.
+									ret = EXTEND_EXHAUSTED_CANDIDATES;
+								} else if(paired) {
 									// Paired-end dynamic programming driver
-									ret = sd.extendSeedsPairedNoEE(
+									ret = sd.extendPrioSeedsPairedNoEE(
 										*rds[mate],     // mate to align as anchor
 										*rds[mate ^ 1], // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
 										!filt[mate ^ 1],// opposite mate filtered out?
-										shs[mate],      // seed hits for anchor
+										nsm,            // smallness threshold
+										nelt,           // # elements total
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
@@ -4740,13 +4765,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										streak[mate],   // stop after streak of this many ungap fails
 										streak[mate],   // stop after streak of this many dp fails
 										mtStreak[mate], // max mate fails per seed range
-										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										tighten,        // -M score tightening mode
-										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
@@ -4761,10 +4784,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									// Might be done, but just with this mate
 								} else {
 									// Unpaired dynamic programming driver
-									ret = sd.extendSeedsNoEE(
+									ret = sd.extendPrioSeedsNoEE(
 										*rds[mate],     // read
 										mate == 0,      // mate #1?
-										shs[mate],      // seed hits
+										nsm,            // smallness threshold
+										nelt,           // # elements total
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
 										ref,            // packed reference strings
@@ -4782,13 +4806,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										mxDp[mate],     // max # DPs
 										streak[mate],   // stop after streak of this many end-to-end fails
 										streak[mate],   // stop after streak of this many ungap fails
-										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										tighten,        // -M score tightening mode
-										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
