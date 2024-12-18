@@ -4761,7 +4761,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									// Might be done, but just with this mate
 								} else {
 									// Unpaired dynamic programming driver
-									ret = sd.extendSeeds(
+									ret = sd.extendSeedsNoEE(
 										*rds[mate],     // read
 										mate == 0,      // mate #1?
 										shs[mate],      // seed hits

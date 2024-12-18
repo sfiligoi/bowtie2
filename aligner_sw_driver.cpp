@@ -1296,6 +1296,471 @@ int SwDriver::extendSeeds(
 	return EXTEND_EXHAUSTED_CANDIDATES;
 }
 
+//same as above, but assuming eeHits==0 -> eeMode=False
+int SwDriver::extendSeedsNoEE(
+	Read& rd,                    // read to align
+	bool mate1,                  // true iff rd is mate #1
+	SeedResults& sh,             // seed hits to extend into full alignments
+	const Ebwt& ebwtFw,          // BWT
+	const Ebwt* ebwtBw,          // BWT'
+	const BitPairReference& ref, // Reference strings
+	SwAligner& swa,              // dynamic programming aligner
+	const Scoring& sc,           // scoring scheme
+	int seedmms,                 // # mismatches allowed in seed
+	int seedlen,                 // length of seed
+	int seedival,                // interval between seeds
+	TAlScore& minsc,             // minimum score for anchor
+	int nceil,                   // maximum # Ns permitted in reference portion
+	size_t maxhalf,  	         // max width in either direction for DP tables
+	bool doUngapped,             // do ungapped alignment
+	size_t maxIters,             // stop after this many seed-extend loop iters
+	size_t maxUg,                // stop after this many ungaps
+	size_t maxDp,                // stop after this many dps
+	size_t maxUgStreak,          // stop after streak of this many ungap fails
+	size_t maxDpStreak,          // stop after streak of this many dp fails
+	bool doExtend,               // do seed extension
+	bool enable8,                // use 8-bit SSE where possible
+	size_t cminlen,              // use checkpointer if read longer than this
+	size_t cpow2,                // interval between diagonals to checkpoint
+	bool doTri,                  // triangular mini-fills?
+	int tighten,                 // -M score tightening mode
+	AlignmentCacheIface& ca,     // alignment cache for seed hits
+	RandomSource& rnd,           // pseudo-random source
+	WalkMetrics& wlm,            // group walk left metrics
+	SwMetrics& swmSeed,          // DP metrics for seed-extend
+	PerReadMetrics& prm,         // per-read metrics
+	AlnSinkWrap* msink,          // AlnSink wrapper for multiseed-style aligner
+	bool reportImmediately,      // whether to report hits immediately to msink
+	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
+{
+	bool all = msink->allHits();
+
+	assert(!reportImmediately || msink != NULL);
+	assert(!reportImmediately || !msink->maxed());
+
+	assert_geq(nceil, 0);
+	assert_leq((size_t)nceil, rd.length());
+	
+	// Calculate the largest possible number of read and reference gaps
+	const size_t rdlen = rd.length();
+	TAlScore perfectScore = sc.perfectScore(rdlen);
+
+	DynProgFramer dpframe(!gReportOverhangs);
+	swa.reset();
+
+	// Initialize a set of GroupWalks, one for each seed.  Also, intialize the
+	// accompanying lists of reference seed hits (satups*)
+	const size_t nsm = 5;
+	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
+	assert(sh.numE2eHits()==0);
+	//size_t eeHits = sh.numE2eHits();
+	//bool eeMode = eeHits > 0;
+
+	if(nonz == 0) {
+		return EXTEND_EXHAUSTED_CANDIDATES; // No seed hits!  Bail.
+	}
+
+	// Reset all the counters related to streaks
+	prm.nEeFail = 0;
+	prm.nUgFail = 0;
+	prm.nDpFail = 0;
+
+	size_t neltLeft = 0, eltsDone = 0;
+	const size_t rows = rdlen;
+	{
+		size_t nelt = 0;
+		prioritizeSATups(
+			rd,            // read
+			sh,            // seed hits to extend into full alignments
+			ebwtFw,        // BWT
+			ebwtBw,        // BWT'
+			ref,           // Reference strings
+			seedmms,       // # seed mismatches allowed
+			maxIters,      // max rows to consider per position
+			doExtend,      // extend out seeds
+			true,          // square extended length
+			true,          // square SA range size
+			nsm,           // smallness threshold
+			ca,            // alignment cache for seed hits
+			rnd,           // pseudo-random generator
+			wlm,           // group walk left metrics
+			prm,           // per-read metrics
+			nelt,          // out: # elements total
+			all);          // report all hits?
+		assert_eq(gws_.size(), rands_.size());
+		assert_eq(gws_.size(), satpos_.size());
+		neltLeft = nelt;
+	}
+	while(neltLeft>0) {
+		if(minsc == perfectScore) {
+				return EXTEND_PERFECT_SCORE; // Already found all perfect hits!
+		}
+		for(size_t i = 0; i < gws_.size(); i++) {
+			bool is_small       = satpos_[i].sat.size() < nsm;
+			bool fw             = satpos_[i].pos.fw;
+			uint32_t rdoff      = satpos_[i].pos.rdoff;
+			uint32_t seedhitlen = satpos_[i].pos.seedlen;
+			if(!fw) {
+				// 'rdoff' and 'offidx' are with respect to the 5' end of
+				// the read.  Here we convert rdoff to be with respect to
+				// the upstream (3') end of ther read.
+				rdoff = (uint32_t)(rdlen - rdoff - seedhitlen);
+			}
+			bool first = true;
+			// If the range is small, investigate all elements now.  If the
+			// range is large, just investigate one and move on - we might come
+			// back to this range later.
+			size_t riter = 0;
+			while(!rands_[i].done() && (first || is_small)) {
+				assert(!gws_[i].done());
+				riter++;
+				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
+					return EXTEND_EXCEEDED_HARD_LIMIT;
+				}
+				if(prm.nExUgs >= maxUg || prm.nMateUgs >= maxUg) {
+					return EXTEND_EXCEEDED_HARD_LIMIT;
+				}
+				if(prm.nExIters >= maxIters) {
+					return EXTEND_EXCEEDED_HARD_LIMIT;
+				}
+				prm.nExIters++;
+				first = false;
+				// Resolve next element offset
+				WalkResult wr;
+				size_t elt = rands_[i].next(rnd);
+				//cerr << "elt=" << elt << endl;
+				SARangeWithOffs<TSlice> sa;
+				sa.topf = satpos_[i].sat.topf;
+				sa.len = satpos_[i].sat.key.len;
+				sa.offs = satpos_[i].sat.offs;
+				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				eltsDone++;
+				assert_gt(neltLeft, 0);
+				neltLeft--;
+				assert_neq(OFF_MASK, wr.toff);
+				TIndexOffU tidx = 0, toff = 0, tlen = 0;
+				bool straddled = false;
+				ebwtFw.joinedToTextOff(
+					wr.elt.len,
+					wr.toff,
+					tidx,
+					toff,
+					tlen,
+					false,     // reject straddlers? (eeMode?=true)
+					straddled); // did it straddle?
+				if(tidx == OFF_MASK) {
+					// The seed hit straddled a reference boundary so the seed hit
+					// isn't valid
+					continue;
+				}
+#ifndef NDEBUG
+				if(!straddled) { // Check that seed hit matches reference
+					uint64_t key = satpos_[i].sat.key.seq;
+					for(size_t k = 0; k < wr.elt.len; k++) {
+						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
+						assert_leq(c, 3);
+						int ck = (int)(key & 3);
+						key >>= 2;
+						assert_eq(c, ck);
+					}
+				}
+#endif
+				// Find offset of alignment's upstream base assuming net gaps=0
+				// between beginning of read and beginning of seed hit
+				int64_t refoff = (int64_t)toff - rdoff;
+				// Coordinate of the seed hit w/r/t the pasted reference string
+				Coord refcoord(tidx, refoff, fw);
+				if(seenDiags1_.locusPresent(refcoord)) {
+					// Already handled alignments seeded on this diagonal
+					prm.nRedundants++;
+					swmSeed.rshit++;
+					continue;
+				}
+				// Now that we have a seed hit, there are many issues to solve
+				// before we have a completely framed dynamic programming problem.
+				// They include:
+				//
+				// 1. Setting reference offsets on either side of the seed hit,
+				//    accounting for where the seed occurs in the read
+				// 2. Adjusting the width of the banded dynamic programming problem
+				//    and adjusting reference bounds to allow for gaps in the
+				//    alignment
+				// 3. Accounting for the edges of the reference, which can impact
+				//    the width of the DP problem and reference bounds.
+				// 4. Perhaps filtering the problem down to a smaller problem based
+				//    on what DPs we've already solved for this read
+				//
+				// We do #1 here, since it is simple and we have all the seed-hit
+				// information here.  #2 and #3 are handled in the DynProgFramer.
+				int readGaps = 0, refGaps = 0;
+				bool ungapped = false;
+				readGaps = sc.maxReadGaps(minsc, rdlen);
+				refGaps  = sc.maxRefGaps(minsc, rdlen);
+				ungapped = (readGaps == 0 && refGaps == 0);
+				int state = FOUND_NONE;
+				bool found = false;
+				if(doUngapped && ungapped) {
+					resUngap_.reset();
+					int al = swa.ungappedAlign(
+						fw ? rd.patFw : rd.patRc,
+						fw ? rd.qual  : rd.qualRev,
+						refcoord,
+						ref,
+						tlen,
+						sc,
+						gReportOverhangs,
+						minsc,
+						resUngap_);
+					Interval refival(refcoord, 1);
+					seenDiags1_.add(refival);
+					prm.nExUgs++;
+					if(al == 0) {
+						prm.nExUgFails++;
+						prm.nUgFail++;
+						if(prm.nUgFail >= maxUgStreak) {
+							return EXTEND_EXCEEDED_SOFT_LIMIT;
+						}
+						swmSeed.ungapfail++;
+						continue;
+					} else if(al == -1) {
+						prm.nExUgFails++;
+						prm.nUgFail++; // count this as failure
+						if(prm.nUgFail >= maxUgStreak) {
+							return EXTEND_EXCEEDED_SOFT_LIMIT;
+						}
+						swmSeed.ungapnodec++;
+					} else {
+						prm.nExUgSuccs++;
+						prm.nUgLastSucc = prm.nExUgs-1;
+						if(prm.nUgFail > prm.nUgFailStreak) {
+							prm.nUgFailStreak = prm.nUgFail;
+						}
+						prm.nUgFail = 0;
+						found = true;
+						state = FOUND_UNGAPPED;
+						swmSeed.ungapsucc++;
+					}
+				}
+				// int64_t pastedRefoff = (int64_t)wr.toff - rdoff;
+				DPRect rect;
+				if(state == FOUND_NONE) {
+					found = dpframe.frameSeedExtensionRect(
+						refoff,   // ref offset implied by seed hit assuming no gaps
+						rows,     // length of read sequence used in DP table
+						tlen,     // length of reference
+						readGaps, // max # of read gaps permitted in opp mate alignment
+						refGaps,  // max # of ref gaps permitted in opp mate alignment
+						(size_t)nceil, // # Ns permitted
+						maxhalf,  // max width in either direction
+						rect);    // DP rectangle
+					assert(rect.repOk());
+					// Add the seed diagonal at least
+					seenDiags1_.add(Interval(refcoord, 1));
+					if(!found) {
+						continue;
+					}
+				}
+				// int64_t leftShift = refoff - rect.refl;
+				size_t nwindow = 0;
+				if((int64_t)toff >= rect.refl) {
+					nwindow = (size_t)(toff - rect.refl);
+				}
+				// NOTE: We might be taking off more than we should because the
+				// pasted string omits non-A/C/G/T characters, but we included them
+				// when calculating leftShift.  We'll account for this later.
+				// pastedRefoff -= leftShift;
+				size_t nsInLeftShift = 0;
+				if(state == FOUND_NONE) {
+					if(!swa.initedRead()) {
+						// Initialize the aligner with a new read
+						swa.initRead(
+							rd.patFw,  // fw version of query
+							rd.patRc,  // rc version of query
+							rd.qual,   // fw version of qualities
+							rd.qualRev,// rc version of qualities
+							0,         // off of first char in 'rd' to consider
+							rdlen,     // off of last char (excl) in 'rd' to consider
+							sc);       // scoring scheme
+					}
+					swa.initRef(
+						fw,        // whether to align forward or revcomp read
+						tidx,      // reference aligned against
+						rect,      // DP rectangle
+						ref,       // Reference strings
+						tlen,      // length of reference sequence
+						sc,        // scoring scheme
+						minsc,     // minimum score permitted
+						enable8,   // use 8-bit SSE if possible?
+						cminlen,   // minimum length for using checkpointing scheme
+						cpow2,     // interval b/t checkpointed diags; 1 << this
+						doTri,     // triangular mini-fills?
+						true,      // this is a seed extension - not finding a mate
+						nwindow,
+						nsInLeftShift);
+					// Because of how we framed the problem, we can say that we've
+					// exhaustively scored the seed diagonal as well as maxgaps
+					// diagonals on either side
+					Interval refival(tidx, 0, fw, 0);
+					rect.initIval(refival);
+					seenDiags1_.add(refival);
+					// Now fill the dynamic programming matrix and return true iff
+					// there is at least one valid alignment
+					TAlScore bestCell = std::numeric_limits<TAlScore>::min();
+					found = swa.align(bestCell);
+					swmSeed.tallyGappedDp(readGaps, refGaps);
+					prm.nExDps++;
+					if(!found) {
+						prm.nExDpFails++;
+						prm.nDpFail++;
+						if(prm.nDpFail >= maxDpStreak) {
+							return EXTEND_EXCEEDED_SOFT_LIMIT;
+						}
+						if(bestCell > std::numeric_limits<TAlScore>::min() && bestCell > prm.bestLtMinscMate1) {
+							prm.bestLtMinscMate1 = bestCell;
+						}
+						continue; // Look for more anchor alignments
+					} else {
+						prm.nExDpSuccs++;
+						prm.nDpLastSucc = prm.nExDps-1;
+						if(prm.nDpFail > prm.nDpFailStreak) {
+							prm.nDpFailStreak = prm.nDpFail;
+						}
+						prm.nDpFail = 0;
+					}
+				}
+				bool firstInner = true;
+				while(true) {
+					assert(found);
+					SwResult *res = NULL;
+					if(state == FOUND_UNGAPPED) {
+						if(!firstInner) {
+							break;
+						}
+						res = &resUngap_;
+					} else {
+						resGap_.reset();
+						assert(resGap_.empty());
+						if(swa.done()) {
+							break;
+						}
+						swa.nextAlignment(resGap_, minsc, rnd);
+						found = !resGap_.empty();
+						if(!found) {
+							break;
+						}
+						res = &resGap_;
+					}
+					assert(res != NULL);
+					firstInner = false;
+					assert(res->alres.matchesRef(
+						rd,
+						ref,
+						tmp_rf_,
+						tmp_rdseq_,
+						tmp_qseq_,
+						raw_refbuf_,
+						raw_destU32_,
+						raw_matches_));
+					Interval refival(tidx, 0, fw, tlen);
+					assert_gt(res->alres.refExtent(), 0);
+					if(gReportOverhangs &&
+					   !refival.containsIgnoreOrient(res->alres.refival()))
+					{
+						res->alres.clipOutside(true, 0, tlen);
+						if(res->alres.refExtent() == 0) {
+							continue;
+						}
+					}
+					assert(gReportOverhangs ||
+					       refival.containsIgnoreOrient(res->alres.refival()));
+					// Did the alignment fall entirely outside the reference?
+					if(!refival.overlapsIgnoreOrient(res->alres.refival())) {
+						continue;
+					}
+					// Is this alignment redundant with one we've seen previously?
+					if(redAnchor_.overlap(res->alres)) {
+						// Redundant with an alignment we found already
+						continue;
+					}
+					redAnchor_.add(res->alres);
+					// Annotate the AlnRes object with some key parameters
+					// that were used to obtain the alignment.
+					res->alres.setParams(
+						seedmms,   // # mismatches allowed in seed
+						seedlen,   // length of seed
+						seedival,  // interval between seeds
+						minsc);    // minimum score for valid alignment
+					
+					if(reportImmediately) {
+						assert(msink != NULL);
+						assert(res->repOk());
+						// Check that alignment accurately reflects the
+						// reference characters aligned to
+						assert(res->alres.matchesRef(
+							rd,
+							ref,
+							tmp_rf_,
+							tmp_rdseq_,
+							tmp_qseq_,
+							raw_refbuf_,
+							raw_destU32_,
+							raw_matches_));
+						// Report an unpaired alignment
+						assert(!msink->maxed());
+						if(msink->report(
+							0,
+							mate1 ? &res->alres : NULL,
+							mate1 ? NULL : &res->alres))
+						{
+							// Short-circuited because a limit, e.g. -k, -m or
+							// -M, was exceeded
+							return EXTEND_POLICY_FULFILLED;
+						}
+						if(tighten > 0 &&
+						   msink->Mmode() &&
+						   msink->hasSecondBestUnp1())
+						{
+							if(tighten == 1) {
+								if(msink->bestUnp1() >= minsc) {
+									minsc = msink->bestUnp1();
+									if(minsc < perfectScore &&
+									   msink->bestUnp1() == msink->secondBestUnp1())
+									{
+										minsc++;
+									}
+								}
+							} else if(tighten == 2) {
+								if(msink->secondBestUnp1() >= minsc) {
+									minsc = msink->secondBestUnp1();
+									if(minsc < perfectScore) {
+										minsc++;
+									}
+								}
+							} else {
+								TAlScore diff = msink->bestUnp1() - msink->secondBestUnp1();
+								TAlScore bot = msink->secondBestUnp1() + ((diff*3)/4);
+								if(bot >= minsc) {
+									minsc = bot;
+									if(minsc < perfectScore) {
+										minsc++;
+									}
+								}
+							}
+							assert_leq(minsc, perfectScore);
+						}
+					}
+				}
+
+				// At this point we know that we aren't bailing, and will
+				// continue to resolve seed hits.  
+
+			} // while(!gws_[i].done())
+		}
+	}
+	// Short-circuited because a limit, e.g. -k, -m or -M, was exceeded
+	return EXTEND_EXHAUSTED_CANDIDATES;
+}
+
 /**
  * Given a collection of SeedHits for both mates in a read pair, extend seed
  * alignments into full alignments and then look for the opposite mate using
@@ -2791,13 +3256,7 @@ int SwDriver::extendSeedsPairedNoEE(
 				while(true) {
 					assert(found);
 					SwResult *res = NULL;
-					if(state == FOUND_EE) {
-						if(!firstInner) {
-							break;
-						}
-						res = &resEe_;
-						assert(res->repOk(rd));
-					} else if(state == FOUND_UNGAPPED) {
+					if(state == FOUND_UNGAPPED) {
 						if(!firstInner) {
 							break;
 						}
@@ -3306,16 +3765,6 @@ int SwDriver::extendSeedsPairedNoEE(
 							prm.nUgFailStreak = prm.nUgFail;
 						}
 						prm.nUgFail = 0;
-					} else if(state == FOUND_EE) {
-						assert_gt(prm.nEeFail, 0);
-						assert_gt(prm.nExEeFails, 0);
-						prm.nExEeFails--;
-						prm.nExEeSuccs++;
-						prm.nEeLastSucc = prm.nExEes-1;
-						if(prm.nEeFail > prm.nEeFailStreak) {
-							prm.nEeFailStreak = prm.nEeFail;
-						}
-						prm.nEeFail = 0;
 					} else {
 						assert_gt(prm.nDpFail, 0);
 						assert_gt(prm.nExDpFails, 0);
