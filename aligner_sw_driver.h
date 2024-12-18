@@ -355,6 +355,43 @@ public:
 		bool reportImmediately,      // whether to report hits immediately to mhs
 		bool& exhaustive);
 
+	//same as above, but assuming eeHits==0 -> eeMode=False
+	int extendSeedsNoEE(
+		Read& rd,                    // read to align
+		bool mate1,                  // true iff rd is mate #1
+		SeedResults& sh,             // seed hits to extend into full alignments
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT'
+		const BitPairReference& ref, // Reference strings
+		SwAligner& swa,              // dynamic programming aligner
+		const Scoring& sc,           // scoring scheme
+		int seedmms,                 // # mismatches allowed in seed
+		int seedlen,                 // length of seed
+		int seedival,                // interval between seeds
+		TAlScore& minsc,             // minimum score for anchor
+		int nceil,                   // maximum # Ns permitted in ref portion
+		size_t maxhalf,              // maximum width on one side of DP table
+		bool doUngapped,             // do ungapped alignment
+		size_t maxIters,             // stop after this many seed-extend loop iters
+		size_t maxUg,                // max # ungapped extends
+		size_t maxDp,                // max # DPs
+		size_t maxUgStreak,          // stop after streak of this many ungap fails
+		size_t maxDpStreak,          // stop after streak of this many dp fails
+		bool doExtend,               // do seed extension
+		bool enable8,                // use 8-bit SSE where possible
+		size_t cminlen,              // use checkpointer if read longer than this
+		size_t cpow2,                // interval between diagonals to checkpoint
+		bool doTri,                  // triangular mini-fills
+		int tighten,                 // -M score tightening mode
+		AlignmentCacheIface& ca,     // alignment cache for seed hits
+		RandomSource& rnd,           // pseudo-random source
+		WalkMetrics& wlm,            // group walk left metrics
+		SwMetrics& swmSeed,          // DP metrics for seed-extend
+		PerReadMetrics& prm,         // per-read metrics
+		AlnSinkWrap* mhs,            // HitSink for multiseed-style aligner
+		bool reportImmediately,      // whether to report hits immediately to mhs
+		bool& exhaustive);
+
 	/**
 	 * Given a collection of SeedHits for a read pair, extend seed
 	 * alignments into full alignments and then look for the opposite
