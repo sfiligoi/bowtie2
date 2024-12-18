@@ -4472,8 +4472,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					// For each mate...
 					assert(msinkwrap.empty());
 					sd.nextRead(paired, rdrows[0], rdrows[1]); // SwDriver
-					size_t minedfw[2] = { 0, 0 };
-					size_t minedrc[2] = { 0, 0 };
 					// Calcualte nofw / no rc
 					bool nofw[2] = { false, false };
 					bool norc[2] = { false, false };
@@ -4557,7 +4555,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							olm.ubases += rdlens[mate]; // bases passing filter
 						}
 					}
-					size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 					// Whether we're done with mate1 / mate2
 					bool done[2] = { !filt[0], !filt[1] };
 
