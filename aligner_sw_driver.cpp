@@ -487,37 +487,26 @@ void SwDriver::extend(
  * Given seed results, set up all of our state for resolving and keeping
  * track of reference offsets for hits.
  */
-void SwDriver::prioritizeSATups(
+void SwDriver::populateSATups(
 	const Read& read,            // read
 	SeedResults& sh,             // seed hits to extend into full alignments
 	const Ebwt& ebwtFw,          // BWT
 	const Ebwt* ebwtBw,          // BWT
-	const BitPairReference& ref, // Reference strings
 	int seedmms,                 // # mismatches allowed in seed
-	size_t maxelt,               // max elts we'll consider
 	bool doExtend,               // do extension of seed hits?
-	bool lensq,                  // square length in weight calculation
-	bool szsq,                   // square range size in weight calculation
 	size_t nsm,                  // if range as <= nsm elts, it's "small"
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
-	RandomSource& rnd,           // pseudo-random generator
-	WalkMetrics& wlm,            // group walk left metrics
 	PerReadMetrics& prm,         // per-read metrics
+	EList<SATupleAndPos, 16>& satpos, // out: elements
 	size_t& nelt_out,            // out: # elements total
-	bool all)                    // report all hits?
+	size_t& nsmall_out)          // out: # small elements
 {
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
-	satups_.clear();
-	gws_.clear();
-	rands_.clear();
-	rands2_.clear();
-	satpos_.clear();
-	satpos2_.clear();
+	satpos.clear();
 	size_t nrange = 0, nelt = 0, nsmall = 0, nsmall_elts = 0;
-	bool keepWhole = false;
-	EList<SATupleAndPos, 16>& satpos = keepWhole ? satpos_ : satpos2_;
 	for(size_t i = 0; i < nonz; i++) {
+		satups_.clear();
 		bool fw = true;
 		uint32_t offidx = 0, rdoff = 0, seedlen = 0;
 		QVal qv = sh.hitsByRank(i, offidx, rdoff, fw, seedlen);
@@ -601,12 +590,59 @@ void SwDriver::prioritizeSATups(
 				range.back().sz = sz;
 			}
 		}
-		satups_.clear();
 	}
+	// final cleanup, as we will not use it anymore, since it is just a temp
+	satups_.clear();
+
 	assert_leq(nsmall, nrange);
 	nelt_out = nelt; // return the total number of elements
+	nsmall_out = nsmall;
 	assert_eq(nrange, satpos.size());
-	satpos.sort();
+	return;
+}
+
+/**
+ * Given seed results, set up all of our state for resolving and keeping
+ * track of reference offsets for hits.
+ */
+void SwDriver::prioritizeSATups(
+	const Read& read,            // read
+	SeedResults& sh,             // seed hits to extend into full alignments
+	const Ebwt& ebwtFw,          // BWT
+	const Ebwt* ebwtBw,          // BWT
+	const BitPairReference& ref, // Reference strings
+	int seedmms,                 // # mismatches allowed in seed
+	size_t maxelt,               // max elts we'll consider
+	bool doExtend,               // do extension of seed hits?
+	bool lensq,                  // square length in weight calculation
+	bool szsq,                   // square range size in weight calculation
+	size_t nsm,                  // if range as <= nsm elts, it's "small"
+	AlignmentCacheIface& ca,     // alignment cache for seed hits
+	RandomSource& rnd,           // pseudo-random generator
+	WalkMetrics& wlm,            // group walk left metrics
+	PerReadMetrics& prm,         // per-read metrics
+	size_t& nelt_out,            // out: # elements total
+	bool all)                    // report all hits?
+{
+	gws_.clear();
+	rands_.clear();
+	rands2_.clear();
+	satpos_.clear();
+	satpos2_.clear();
+	size_t nrange = 0, nelt = 0, nsmall = 0;
+	bool keepWhole = false;
+	{
+		EList<SATupleAndPos, 16>& satpos = keepWhole ? satpos_ : satpos2_;
+		populateSATups(
+			read, sh, ebwtFw, ebwtBw, 
+			seedmms, doExtend, nsm,
+			ca, prm,
+			satpos, nelt, nsmall);
+		nelt_out = nelt; // first approximation
+		nrange = satpos.size();
+		assert_leq(nsmall, nrange);
+		satpos.sort();
+	}
 	if(keepWhole) {
 		gws_.ensure(nrange);
 		rands_.ensure(nrange);
@@ -634,15 +670,7 @@ void SwDriver::prioritizeSATups(
 	gws_.ensure(min(maxelt, nelt));
 	rands_.ensure(min(maxelt, nelt));
 	rands2_.ensure(min(maxelt, nelt));
-	size_t nlarge_elts = nelt - nsmall_elts;
-	if(maxelt < nelt) {
-		size_t diff = nelt - maxelt;
-		if(diff >= nlarge_elts) {
-			nlarge_elts = 0;
-		} else {
-			nlarge_elts -= diff;
-		}
-	}
+
 	size_t nelt_added = 0;
 	// Now we have a collection of ranges in satpos2_.  Now we want to decide
 	// how we explore elements from them.  The basic idea is that: for very

@@ -532,6 +532,20 @@ public:
 	 * Given seed results, set up all of our state for resolving and keeping
 	 * track of reference offsets for hits.
 	 */
+	void populateSATups(
+		const Read& read,            // read
+		SeedResults& sh,             // seed hits to extend into full alignments
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT
+		int seedmms,                 // # mismatches allowed in seed
+		bool doExtend,               // do extension of seed hits?
+		size_t nsm,                  // if range as <= nsm elts, it's "small"
+		AlignmentCacheIface& ca,     // alignment cache for seed hits
+		PerReadMetrics& prm,         // per-read metrics
+		EList<SATupleAndPos, 16>& satpos, // out: elements
+		size_t& nelt_out,            // out: # elements total
+		size_t& nsmall_out);         // out: # small elements
+
 	void prioritizeSATups(
 		const Read& rd,              // read
 		SeedResults& sh,             // seed hits to extend into full alignments
