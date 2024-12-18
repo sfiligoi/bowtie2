@@ -3188,7 +3188,6 @@ static void multiseedSearchWorker(void *vp) {
 			}
 			if(rdid >= skipReads && rdid < qUpto && sample) {
 				// Align this read/pair
-				bool retry = true;
 				//
 				// Check if there is metrics reporting for us to do.
 				//
@@ -3229,8 +3228,7 @@ static void multiseedSearchWorker(void *vp) {
 				}
 #endif
 				// Try to align this read
-				while(retry) {
-					retry = false;
+				{
 					ca.nextRead(); // clear the cache
 					olm.reads++;
 					assert(!ca.aligning());
@@ -4121,8 +4119,7 @@ static void multiseedSearchWorker(void *vp) {
 					seedSumm,             // suppress alignments?
 					scUnMapped,           // Consider soft-clipped bases unmapped when calculating TLEN
 					xeq);
-				assert(!retry || msinkwrap.empty());
-			} // while(retry)
+			}
 		} // if(rdid >= skipReads && rdid < qUpto)
 		else if(rdid >= qUpto) {
 			done = true;
@@ -4341,7 +4338,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 			}
 			if(rdid >= skipReads && rdid < qUpto && sample) {
 				// Align this read/pair
-				bool retry = true;
 				//
 				// Check if there is metrics reporting for us to do.
 				//
@@ -4382,8 +4378,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 				}
 #endif
 				// Try to align this read
-				while(retry) {
-					retry = false;
+				{
 					ca.nextRead(); // clear the cache
 					olm.reads++;
 					assert(!ca.aligning());
@@ -4914,8 +4909,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					seedSumm,             // suppress alignments?
 					scUnMapped,           // Consider soft-clipped bases unmapped when calculating TLEN
 					xeq);
-				assert(!retry || msinkwrap.empty());
-			} // while(retry)
+			}
 		} // if(rdid >= skipReads && rdid < qUpto)
 		else if(rdid >= qUpto) {
 			done = true;
