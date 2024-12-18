@@ -416,6 +416,57 @@ public:
 		bool mixed,                  // look for unpaired as well as paired alns?
 		bool& exhaustive);
 
+	//same as above, but assuming eeHits==0 -> eeMode=False
+	int extendSeedsPairedNoEE(
+		Read& rd,                    // mate to align as anchor
+		Read& ord,                   // mate to align as opposite
+		bool anchor1,                // true iff anchor mate is mate1
+		bool oppFilt,                // true iff opposite mate was filtered out
+		SeedResults& sh,             // seed hits for anchor
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT'
+		const BitPairReference& ref, // Reference strings
+		SwAligner& swa,              // dyn programming aligner for anchor
+		SwAligner& swao,             // dyn programming aligner for opposite
+		const Scoring& sc,           // scoring scheme
+		const PairedEndPolicy& pepol,// paired-end policy
+		int seedmms,                 // # mismatches allowed in seed
+		int seedlen,                 // length of seed
+		int seedival,                // interval between seeds
+		TAlScore& minsc,             // minimum score for anchor
+		TAlScore& ominsc,            // minimum score for opposite
+		int nceil,                   // max # Ns permitted in ref for anchor
+		int onceil,                  // max # Ns permitted in ref for opposite
+		bool nofw,                   // don't align forward read
+		bool norc,                   // don't align revcomp read
+		size_t maxhalf,              // maximum width on one side of DP table
+		bool doUngapped,             // do ungapped alignment
+		size_t maxIters,             // stop after this many seed-extend loop iters
+		size_t maxUg,                // max # ungapped extends
+		size_t maxDp,                // max # DPs
+		size_t maxEeStreak,          // stop after streak of this many end-to-end fails
+		size_t maxUgStreak,          // stop after streak of this many ungap fails
+		size_t maxDpStreak,          // stop after streak of this many dp fails
+		size_t maxMateStreak,        // stop seed range after N mate-find fails
+		bool doExtend,               // do seed extension
+		bool enable8,                // use 8-bit SSE where possible
+		size_t cminlen,              // use checkpointer if read longer than this
+		size_t cpow2,                // interval between diagonals to checkpoint
+		bool doTri,                  // triangular mini-fills
+		int tighten,                 // -M score tightening mode
+		AlignmentCacheIface& cs,     // alignment cache for seed hits
+		RandomSource& rnd,           // pseudo-random source
+		WalkMetrics& wlm,            // group walk left metrics
+		SwMetrics& swmSeed,          // DP metrics for seed-extend
+		SwMetrics& swmMate,          // DP metrics for mate finidng
+		PerReadMetrics& prm,         // per-read metrics for anchor
+		AlnSinkWrap* msink,          // AlnSink wrapper for multiseed-style aligner
+		bool swMateImmediately,      // whether to look for mate immediately
+		bool reportImmediately,      // whether to report hits immediately to msink
+		bool discord,                // look for discordant alignments?
+		bool mixed,                  // look for unpaired as well as paired alns?
+		bool& exhaustive);
+
 	/**
 	 * Prepare for a new read.
 	 */

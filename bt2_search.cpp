@@ -4709,7 +4709,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 								int ret = 0;
 								if(paired) {
 									// Paired-end dynamic programming driver
-									ret = sd.extendSeedsPaired(
+									ret = sd.extendSeedsPairedNoEE(
 										*rds[mate],     // mate to align as anchor
 										*rds[mate ^ 1], // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
