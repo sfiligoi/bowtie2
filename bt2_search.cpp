@@ -4560,8 +4560,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					size_t eePeEeltLimit = std::numeric_limits<size_t>::max();
 					// Whether we're done with mate1 / mate2
 					bool done[2] = { !filt[0], !filt[1] };
-					size_t nelt[2] = {0, 0};
-
 
 					int seedlens[2] = { multiseedLen, multiseedLen };
 					nrounds[0] = min<size_t>(nrounds[0], interval[0]);
