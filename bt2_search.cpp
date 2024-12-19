@@ -4709,7 +4709,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 								shs[mate].rankSeedHits(rnd, all);
 								const size_t nsm = 5; // smallness threshold
 								size_t nelt = 0;
-								sd.prioritizeSATups(
+								sd.populateAndPrioritizeSATups(
 										*rds[mate],     // read
 										shs[mate],      // seed hits to extend into full alignments
 										ebwtFw,         // bowtie index

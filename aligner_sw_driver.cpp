@@ -606,34 +606,24 @@ void SwDriver::populateSATups(
  * track of reference offsets for hits.
  */
 void SwDriver::prioritizeSATups(
-	const Read& read,            // read
-	SeedResults& sh,             // seed hits to extend into full alignments
+	EList<SATupleAndPos, 16>& satpos_base, // in: unsorted elements
+	size_t nelt,                 // in: # elements total
+	size_t nsmall,               // in: # small elements
 	const Ebwt& ebwtFw,          // BWT
 	const Ebwt* ebwtBw,          // BWT
 	const BitPairReference& ref, // Reference strings
-	int seedmms,                 // # mismatches allowed in seed
 	size_t maxelt,               // max elts we'll consider
-	bool doExtend,               // do extension of seed hits?
 	bool lensq,                  // square length in weight calculation
 	bool szsq,                   // square range size in weight calculation
-	size_t nsm,                  // if range as <= nsm elts, it's "small"
-	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
-	PerReadMetrics& prm,         // per-read metrics
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
-	size_t nrange = 0, nelt = 0, nsmall = 0;
+	size_t nrange = 0;
 	//constexpr bool keepWhole = false;
-	EList<SATupleAndPos, 16>& satpos_base = getUnsortedSatPos();
 	assert((&satpos_base) != (&satpos_));
 
-	populateSATups(
-		read, sh, ebwtFw, ebwtBw, 
-		seedmms, doExtend, nsm,
-		ca, prm,
-		satpos_base, nelt, nsmall);
 	nrange = satpos_base.size();
 	assert_leq(nsmall, nrange);
 	satpos_base.sort();
@@ -741,6 +731,44 @@ void SwDriver::prioritizeSATups(
 	}
 	nelt_out = nelt_added;
 	return;
+}
+
+void SwDriver::populateAndPrioritizeSATups(
+	const Read& read,            // read
+	SeedResults& sh,             // seed hits to extend into full alignments
+	const Ebwt& ebwtFw,          // BWT
+	const Ebwt* ebwtBw,          // BWT
+	const BitPairReference& ref, // Reference strings
+	int seedmms,                 // # mismatches allowed in seed
+	size_t maxelt,               // max elts we'll consider
+	bool doExtend,               // do extension of seed hits?
+	bool lensq,                  // square length in weight calculation
+	bool szsq,                   // square range size in weight calculation
+	size_t nsm,                  // if range as <= nsm elts, it's "small"
+	AlignmentCacheIface& ca,     // alignment cache for seed hits
+	RandomSource& rnd,           // pseudo-random generator
+	WalkMetrics& wlm,            // group walk left metrics
+	PerReadMetrics& prm,         // per-read metrics
+	size_t& nelt_out,            // out: # elements total
+	bool all)                    // report all hits?
+{
+	size_t nelt = 0, nsmall = 0;
+	//constexpr bool keepWhole = false;
+	EList<SATupleAndPos, 16>& satpos_base = getUnsortedSatPos();
+	assert((&satpos_base) != (&satpos_));
+
+	populateSATups(
+		read, sh, ebwtFw, ebwtBw, 
+		seedmms, doExtend, nsm,
+		ca, prm,
+		satpos_base, nelt, nsmall);
+	prioritizeSATups(
+		satpos_base, nelt, nsmall,
+		ebwtFw, ebwtBw, ref,
+		maxelt, lensq, szsq,
+		rnd, wlm,
+		nelt_out,
+		all);
 }
 
 // debug version
@@ -919,7 +947,7 @@ int SwDriver::extendSeeds(
 			}
 			if(firstExtend) {
 				nelt = 0;
-				prioritizeSATups(
+				populateAndPrioritizeSATups(
 					rd,            // read
 					sh,            // seed hits to extend into full alignments
 					ebwtFw,        // BWT
@@ -2041,7 +2069,7 @@ int SwDriver::extendSeedsPaired(
 			}
 			if(firstExtend) {
 				nelt = 0;
-				prioritizeSATups(
+				populateAndPrioritizeSATups(
 					rd,            // read
 					sh,            // seed hits to extend into full alignments
 					ebwtFw,        // BWT

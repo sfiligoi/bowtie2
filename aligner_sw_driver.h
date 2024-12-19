@@ -550,23 +550,52 @@ public:
 		size_t& nsmall_out);         // out: # small elements
 
 	void prioritizeSATups(
-		const Read& rd,              // read
+		EList<SATupleAndPos, 16>& satpos_base, // in: unsorted elements
+		size_t nelt,                 // in: # elements total
+		size_t nsmall,               // in: # small elements
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT
+		const BitPairReference& ref, // Reference strings
+		size_t maxelt,               // max elts we'll consider
+		bool lensq,                  // square length in weight calculation
+		bool szsq,                   // square range size in weight calculation
+		RandomSource& rnd,           // pseudo-random generator
+		WalkMetrics& wlm,            // group walk left metrics
+		size_t& nelt_out,            // out: # elements total
+		bool all);                    // report all hits?
+
+	void populateAndPrioritizeSATups(
+		const Read& read,            // read
 		SeedResults& sh,             // seed hits to extend into full alignments
 		const Ebwt& ebwtFw,          // BWT
-		const Ebwt* ebwtBw,          // BWT'
+		const Ebwt* ebwtBw,          // BWT
 		const BitPairReference& ref, // Reference strings
-		int seedmms,                 // # seed mismatches allowed
+		int seedmms,                 // # mismatches allowed in seed
 		size_t maxelt,               // max elts we'll consider
-		bool doExtend,               // extend out seeds
-		bool lensq,                  // square extended length
-		bool szsq,                   // square SA range size
+		bool doExtend,               // do extension of seed hits?
+		bool lensq,                  // square length in weight calculation
+		bool szsq,                   // square range size in weight calculation
 		size_t nsm,                  // if range as <= nsm elts, it's "small"
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
 		PerReadMetrics& prm,         // per-read metrics
 		size_t& nelt_out,            // out: # elements total
-		bool all);                   // report all hits?
+		bool all);                    // report all hits?
+
+	void populateAndPopulateSATups(
+		const Read& read,            // read
+		SeedResults& sh,             // seed hits to extend into full alignments
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT
+		int seedmms,                 // # mismatches allowed in seed
+		bool doExtend,               // do extension of seed hits?
+		size_t nsm,                  // if range as <= nsm elts, it's "small"
+		AlignmentCacheIface& ca,     // alignment cache for seed hits
+		PerReadMetrics& prm,         // per-read metrics
+		EList<SATupleAndPos, 16>& satpos, // out: elements
+		size_t& nelt_out,            // out: # elements total
+		size_t& nsmall_out);         // out: # small elements
 
 protected:
 
