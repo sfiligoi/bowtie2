@@ -624,46 +624,24 @@ void SwDriver::prioritizeSATups(
 	size_t& nelt_out,            // out: # elements total
 	bool all)                    // report all hits?
 {
+	size_t nrange = 0, nelt = 0, nsmall = 0;
+	//constexpr bool keepWhole = false;
+	EList<SATupleAndPos, 16>& satpos_base = getUnsortedSatPos();
+	assert((&satpos_base) != (&satpos_));
+
+	populateSATups(
+		read, sh, ebwtFw, ebwtBw, 
+		seedmms, doExtend, nsm,
+		ca, prm,
+		satpos_base, nelt, nsmall);
+	nrange = satpos_base.size();
+	assert_leq(nsmall, nrange);
+	satpos_base.sort();
+
 	gws_.clear();
 	rands_.clear();
 	rands2_.clear();
 	satpos_.clear();
-	satpos2_.clear();
-	size_t nrange = 0, nelt = 0, nsmall = 0;
-	bool keepWhole = false;
-	{
-		EList<SATupleAndPos, 16>& satpos = keepWhole ? satpos_ : satpos2_;
-		populateSATups(
-			read, sh, ebwtFw, ebwtBw, 
-			seedmms, doExtend, nsm,
-			ca, prm,
-			satpos, nelt, nsmall);
-		nelt_out = nelt; // first approximation
-		nrange = satpos.size();
-		assert_leq(nsmall, nrange);
-		satpos.sort();
-	}
-	if(keepWhole) {
-		gws_.ensure(nrange);
-		rands_.ensure(nrange);
-		for(size_t i = 0; i < nrange; i++) {
-			gws_.expand();
-			SARangeWithOffs<TSlice> sa;
-			sa.topf = satpos_.back().sat.topf;
-			sa.len = satpos_.back().sat.key.len;
-			sa.offs = satpos_.back().sat.offs;
-			gws_.back().init(
-				ebwtFw, // forward Bowtie index
-				ref,    // reference sequences
-				sa,     // SA tuples: ref hit, salist range
-				rnd,    // pseudo-random generator
-				wlm);   // metrics
-			assert(gws_.back().initialized());
-			rands_.expand();
-			rands_.back().init(satpos_[i].sat.size(), all);
-		}
-		return;
-	}
 	// Resize satups_ list so that ranges having elements that we might
 	// possibly explore are present
 	satpos_.ensure(min(maxelt, nelt));
@@ -672,7 +650,7 @@ void SwDriver::prioritizeSATups(
 	rands2_.ensure(min(maxelt, nelt));
 
 	size_t nelt_added = 0;
-	// Now we have a collection of ranges in satpos2_.  Now we want to decide
+	// Now we have a collection of ranges in satpos_base.  Now we want to decide
 	// how we explore elements from them.  The basic idea is that: for very
 	// small guys, where "very small" means that the size of the range is less
 	// than or equal to the parameter 'nsz', we explore them in their entirety
@@ -683,7 +661,7 @@ void SwDriver::prioritizeSATups(
 	// 1. do the smalls
 	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
 		satpos_.expand();
-		satpos_.back() = satpos2_[j];
+		satpos_.back() = satpos_base[j];
 		gws_.expand();
 		SARangeWithOffs<TSlice> sa;
 		sa.topf = satpos_.back().sat.topf;
@@ -705,26 +683,26 @@ void SwDriver::prioritizeSATups(
 		}
 #endif
 	}
-	if(nelt_added >= maxelt || nsmall == satpos2_.size()) {
+	if(nelt_added >= maxelt || nsmall == satpos_base.size()) {
 		nelt_out = nelt_added;
 		return;
 	}
 	// 2. do the non-smalls
 	// Initialize the row sampler
-	rowsamp_.init(satpos2_, nsmall, satpos2_.size(), lensq, szsq);
+	rowsamp_.init(satpos_base, nsmall, satpos_base.size(), lensq, szsq);
 	// Initialize the random choosers
-	rands2_.resize(satpos2_.size());
-	for(size_t j = 0; j < satpos2_.size(); j++) {
+	rands2_.resize(satpos_base.size());
+	for(size_t j = 0; j < satpos_base.size(); j++) {
 		rands2_[j].reset();
 	}
 	while(nelt_added < maxelt && nelt_added < nelt) {
 		// Pick a non-small range to sample from
 		size_t ri = rowsamp_.next(rnd) + nsmall;
 		assert_geq(ri, nsmall);
-		assert_lt(ri, satpos2_.size());
+		assert_lt(ri, satpos_base.size());
 		// Initialize random element chooser for that range
 		if(!rands2_[ri].inited()) {
-			rands2_[ri].init(satpos2_[ri].sat.size(), all);
+			rands2_[ri].init(satpos_base[ri].sat.size(), all);
 			assert(!rands2_[ri].done());
 		}
 		assert(!rands2_[ri].done());
@@ -737,12 +715,12 @@ void SwDriver::prioritizeSATups(
 		// Add the element to the satpos_ list
 		SATuple sat;
 		TSlice o;
-		o.init(satpos2_[ri].sat.offs, r, r+1);
-		sat.init(satpos2_[ri].sat.key, (TIndexOffU)(satpos2_[ri].sat.topf + r), OFF_MASK, o);
+		o.init(satpos_base[ri].sat.offs, r, r+1);
+		sat.init(satpos_base[ri].sat.key, (TIndexOffU)(satpos_base[ri].sat.topf + r), OFF_MASK, o);
 		satpos_.expand();
 		satpos_.back().sat = sat;
-		satpos_.back().origSz = satpos2_[ri].origSz;
-		satpos_.back().pos = satpos2_[ri].pos;
+		satpos_.back().origSz = satpos_base[ri].origSz;
+		satpos_.back().pos = satpos_base[ri].pos;
 		// Initialize GroupWalk object
 		gws_.expand();
 		SARangeWithOffs<TSlice> sa;
@@ -762,6 +740,67 @@ void SwDriver::prioritizeSATups(
 		nelt_added++;
 	}
 	nelt_out = nelt_added;
+	return;
+}
+
+// debug version
+void SwDriver::populateAndPrioritizeSATupsWhole(
+	const Read& read,            // read
+	SeedResults& sh,             // seed hits to extend into full alignments
+	const Ebwt& ebwtFw,          // BWT
+	const Ebwt* ebwtBw,          // BWT
+	const BitPairReference& ref, // Reference strings
+	int seedmms,                 // # mismatches allowed in seed
+	size_t maxelt,               // max elts we'll consider
+	bool doExtend,               // do extension of seed hits?
+	bool lensq,                  // square length in weight calculation
+	bool szsq,                   // square range size in weight calculation
+	size_t nsm,                  // if range as <= nsm elts, it's "small"
+	AlignmentCacheIface& ca,     // alignment cache for seed hits
+	RandomSource& rnd,           // pseudo-random generator
+	WalkMetrics& wlm,            // group walk left metrics
+	PerReadMetrics& prm,         // per-read metrics
+	size_t& nelt_out,            // out: # elements total
+	bool all)                    // report all hits?
+{
+	gws_.clear();
+	rands_.clear();
+	satpos_.clear();
+	size_t nrange = 0, nelt = 0, nsmall = 0;
+	//constexpr bool keepWhole = true;
+	{
+		// Use the main satpos_, so we do not make a copy
+		EList<SATupleAndPos, 16>& satpos = satpos_;
+		populateSATups(
+			read, sh, ebwtFw, ebwtBw, 
+			seedmms, doExtend, nsm,
+			ca, prm,
+			satpos, nelt, nsmall);
+		nrange = satpos.size();
+		assert_leq(nsmall, nrange);
+		satpos.sort();
+	}
+	{
+		gws_.ensure(nrange);
+		rands_.ensure(nrange);
+		for(size_t i = 0; i < nrange; i++) {
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = satpos_.back().sat.topf;
+			sa.len = satpos_.back().sat.key.len;
+			sa.offs = satpos_.back().sat.offs;
+			gws_.back().init(
+				ebwtFw, // forward Bowtie index
+				ref,    // reference sequences
+				sa,     // SA tuples: ref hit, salist range
+				rnd,    // pseudo-random generator
+				wlm);   // metrics
+			assert(gws_.back().initialized());
+			rands_.expand();
+			rands_.back().init(satpos_[i].sat.size(), all);
+		}
+	}
+	nelt_out = nelt;
 	return;
 }
 

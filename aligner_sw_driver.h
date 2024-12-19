@@ -528,6 +528,9 @@ public:
 		redAnchor_.init(maxlen);
 	}
 
+	EList<SATupleAndPos, 16>& getUnsortedSatPos() {return satpos2_;}
+	EList<SATupleAndPos, 16>& getPrioSatPos() {return satpos_;}
+
 	/**
 	 * Given seed results, set up all of our state for resolving and keeping
 	 * track of reference offsets for hits.
@@ -593,6 +596,26 @@ protected:
 		PerReadMetrics& prm,  // per-read metrics
 		size_t& nlex,         // # positions we can extend to left w/o edit
 		size_t& nrex);        // # positions we can extend to right w/o edit
+
+	// debug version
+	void populateAndPrioritizeSATupsWhole(
+		const Read& read,            // read
+		SeedResults& sh,             // seed hits to extend into full alignments
+		const Ebwt& ebwtFw,          // BWT
+		const Ebwt* ebwtBw,          // BWT
+		const BitPairReference& ref, // Reference strings
+		int seedmms,                 // # mismatches allowed in seed
+		size_t maxelt,               // max elts we'll consider
+		bool doExtend,               // do extension of seed hits?
+		bool lensq,                  // square length in weight calculation
+		bool szsq,                   // square range size in weight calculation
+		size_t nsm,                  // if range as <= nsm elts, it's "small"
+		AlignmentCacheIface& ca,     // alignment cache for seed hits
+		RandomSource& rnd,           // pseudo-random generator
+		WalkMetrics& wlm,            // group walk left metrics
+		PerReadMetrics& prm,         // per-read metrics
+		size_t& nelt_out,            // out: # elements total
+		bool all);                    // report all hits?
 
 	Random1toN               rand_;    // random number generators
 	EList<Random1toN, 16>    rands_;   // random number generators
