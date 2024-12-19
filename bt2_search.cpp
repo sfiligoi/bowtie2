@@ -4708,25 +4708,33 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 								const bool all = msinkwrap.allHits();
 								shs[mate].rankSeedHits(rnd, all);
 								const size_t nsm = 5; // smallness threshold
-								size_t nelt = 0;
-								sd.populateAndPrioritizeSATups(
+								size_t nelt = 0, nsmall = 0;
+								auto& satpos_base = sd.getUnsortedSatPos();
+
+								sd.populateSATups(
 										*rds[mate],     // read
 										shs[mate],      // seed hits to extend into full alignments
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
-										ref,            // packed reference strings
 										multiseedMms,   // # mms allowed in a seed
-										mxIter[mate],   // max extend loop iters
 										doExtend,       // extend seed hits
-										true,          // square extended length
-										true,          // square SA range size
 										nsm,           // smallness threshold
 										ca,             // seed alignment cache
+										prm,            // per-read metrics
+										satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
+								sd.prioritizeSATups(
+										satpos_base, nelt, nsmall,   // in from populateSATups
+										ebwtFw,         // bowtie index
+										ebwtBw,         // rev bowtie index
+										ref,            // packed reference strings
+										mxIter[mate],   // max extend loop iters
+										true,          // square extended length
+										true,          // square SA range size
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
-										prm,            // per-read metrics
 										nelt,          // out: # elements total
 										all);          // report all hits?
+
 								int ret = 0;
 								if (shs[mate].nonzeroOffsets()==0) {
 									// No seed hits!  Bail.
