@@ -27,6 +27,8 @@
 #include <stdexcept>
 #include <stdlib.h>
 #include <string>
+#include <vector>
+#include <unordered_map>
 #include <thread>
 #include <time.h>
 #include <utility>
@@ -4154,6 +4156,52 @@ static void multiseedSearchWorker(void *vp) {
 	return;
 }
 
+class AlnSinkStateMap {
+public:
+	AlnSinkStateMap(AlnSinkWrap &msinkwrap)
+		: msinkwrap_(msinkwrap),
+		  sinkmap_(),
+		  sinklist_()
+	{
+		// we expet these tobe used, so pre-allocate some memory
+		sinkmap_.reserve(16);
+		sinklist_.reserve(16);
+	}
+
+	// prepare for next read, by removing all old states
+	void nextRead() {
+		sinkmap_.clear();
+		sinklist_.clear();
+	}
+
+	AlnSinkStateWrap &get(TIndexOffU idx) {
+		auto itr = sinkmap_.find(idx);
+		if (itr!=sinkmap_.end()) {
+			// element exists, just return
+			return sinklist_[itr->second];
+		}
+		// element does not exist, create a new one
+		sinklist_.emplace_back(msinkwrap_);
+		sinkmap_[idx] = sinklist_.size()-1;
+
+		AlnSinkStateWrap &out = sinklist_.back();
+		out.nextRead(); // finish initialization
+		return out;
+			
+	}
+
+	void merge() {
+		for (auto& el : sinklist_) {
+			el.merge();
+		}
+	}
+
+protected:
+	AlnSinkWrap &msinkwrap_;                          // parent sink
+	std::unordered_map<TIndexOffU,size_t> sinkmap_;   // pointers into sinklist_
+	std::vector<AlnSinkStateWrap> sinklist_;          // the sinksatate objects
+};
+
 // simplified multiseedSearchWorker when we know there is 
 //    no ExactUpFront and no 1mmUpFront
 //    mhits==0 (=> msample==false)
@@ -4230,6 +4278,9 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 			rp,            // reporting parameters
 			*bmapq,        // MAPQ calculator
 			(size_t)tid);  // thread id
+
+		// Allow for having multiple states per sink
+		AlnSinkStateMap sinkmap(msinkwrap);
 
 		// Write dynamic-programming problem descriptions here
 		ofstream *dpLog = NULL, *dpLogOpp = NULL;
@@ -4574,8 +4625,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					size_t seedHitTotMS[] = {0, 0, 0, 0};
 
 					const bool all = msinkwrap.allHits();
-					AlnSinkStateWrap sinkstate(msinkwrap);
-					sinkstate.nextRead();
+					sinkmap.nextRead();
 
 					for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
 						ca.nextRead(); // Clear cache in preparation for new search
@@ -4725,6 +4775,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										prm,            // per-read metrics
 										satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
 
+								const TIndexOffU tidx = 0; // TODO: Fixed for now, should be dynamic
+								AlnSinkStateWrap &sinkstate = sinkmap.get(tidx);
 								assert(sinkstate.repOk());
 
 								sd.prioritizeSATups(
@@ -4868,7 +4920,9 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							}
 						}
 					} // end loop over reseeding rounds
-					sinkstate.merge();
+
+					// we are done updating sinkmap for thir read, merge with parent
+					sinkmap.merge();
 
 					if(seedsTried > 0) {
 						prm.seedPctUnique = (float)nUniqueSeeds / seedsTried;

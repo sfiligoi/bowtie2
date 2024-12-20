@@ -1321,6 +1321,18 @@ public:
 		, st_(msink_.rp_)  // keep dedicated state
 	{}
 
+	AlnSinkStateWrap(const AlnSinkStateWrap& other)
+		: msink_(other.msink_)
+		, st_(other.st_)
+	{}
+
+	// move construtor is just a copy constructor
+	// no harm keeping the other alive
+	AlnSinkStateWrap(AlnSinkStateWrap&& other)
+		: msink_(other.msink_)
+		, st_(other.st_)
+	{}
+
 	void nextRead() {
 		st_.nextRead(msink_.st_);
 	}
