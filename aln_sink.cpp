@@ -1392,12 +1392,12 @@ void AlnSinkWrap::finishRead(
  * short circuited.  Otherwise, the alignment is tallied and false
  * is returned.
  */
-bool AlnSinkWrap::report(
-	int stage,
-	const AlnRes* rs1,
-	const AlnRes* rs2)
+
+inline bool sw_report(const AlnRes* rs1, const AlnRes* rs2,
+		      EList<AlnRes>   &rs1_,  EList<AlnRes>   &rs2_,
+		      EList<AlnRes>   &rs1u_, EList<AlnRes>   &rs2u_,
+		      ReportingState  &st_)
 {
-	assert(init_);
 	assert(rs1 != NULL || rs2 != NULL);
 	assert(rs1 == NULL || !rs1->empty());
 	assert(rs2 == NULL || !rs2->empty());
@@ -1405,10 +1405,7 @@ bool AlnSinkWrap::report(
 	assert(rs2 == NULL || rs2->repOk());
 	bool paired = (rs1 != NULL && rs2 != NULL);
 	bool one = (rs1 != NULL);
-	const AlnRes* rsa = one ? rs1 : rs2;
-	const AlnRes* rsb = one ? rs2 : rs1;
 	if(paired) {
-		assert(readIsPair());
 		st_.foundConcordant();
 		rs1_.push_back(*rs1);
 		rs2_.push_back(*rs2);
@@ -1420,11 +1417,30 @@ bool AlnSinkWrap::report(
 			rs2u_.push_back(*rs2);
 		}
 	}
+	return st_.done();
+}
+
+bool AlnSinkWrap::report(
+	int stage,
+	const AlnRes* rs1,
+	const AlnRes* rs2)
+{
+	assert(init_);
+	bool out = sw_report(
+			rs1,rs2,
+			rs1_,rs2_,rs1u_,rs2u_,
+			st_);
+
 	// Tally overall alignment score
+	bool paired = (rs1 != NULL && rs2 != NULL);
+	bool one = (rs1 != NULL);
+	const AlnRes* rsa = one ? rs1 : rs2;
+	const AlnRes* rsb = one ? rs2 : rs1;
 	TAlScore score = rsa->score().score();
 	if(rsb != NULL) score += rsb->score().score();
 	// Update best score so far
 	if(paired) {
+		assert(readIsPair());
 		if(score > bestPair_) {
 			best2Pair_ = bestPair_;
 			bestPair_ = score;
@@ -1448,7 +1464,20 @@ bool AlnSinkWrap::report(
 			}
 		}
 	}
-	return st_.done();
+	return out;
+}
+
+bool AlnSinkStateWrap::report(
+	int stage,
+	const AlnRes* rs1,
+	const AlnRes* rs2)
+{
+	assert(init_);
+	return sw_report(
+			rs1,rs2,
+			msink_.rs1_,msink_.rs2_,msink_.rs1u_,msink_.rs2u_,
+			st_);
+	// We do not keep score in this class
 }
 
 /**

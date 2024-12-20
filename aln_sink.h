@@ -376,6 +376,30 @@ public:
 	}
 
 	/**
+	 * Merge stats from derivative state
+	 */
+	void merge(const ReportingState& st) {
+		nconcord_ += st.nconcord_;
+		ndiscord_ += st.ndiscord_;
+		nunpair1_ += st.nunpair1_;
+		nunpair2_ += st.nunpair2_;
+		// TODO: Implement proper merging for the following
+		// For now just copy over
+		state_ = st.state_;
+		paired_ = st.paired_;
+		doneConcord_ = st.doneConcord_;
+		doneDiscord_ = st.doneDiscord_;
+		doneUnpair_  = st.doneUnpair_;
+		doneUnpair1_ = st.doneUnpair1_;
+		doneUnpair2_ = st.doneUnpair2_;
+		exitConcord_ = st.exitConcord_;
+		exitDiscord_ = st.exitDiscord_;
+		exitUnpair1_ = st.exitUnpair1_;
+		exitUnpair2_ = st.exitUnpair2_;
+		done_ = st.done_;
+	}
+
+	/**
 	 * Return true iff this ReportingState has been initialized with a call to
 	 * nextRead() since the last time reset() was called.
 	 */
@@ -386,6 +410,7 @@ public:
 	 * on whether it's paired-end or unpaired.
 	 */
 	void nextRead(bool paired);
+	void nextRead(const ReportingState& o) {nextRead(o.paired_);}
 
 	/**
 	 * Caller uses this member function to indicate that one additional
@@ -866,6 +891,8 @@ protected:
 	ReportingMetrics   met_;          // global repository of reporting metrics
 };
 
+class AlnSinkStateWrap;
+
 /**
  * Per-thread hit sink "wrapper" for the MultiSeed aligner.  Encapsulates
  * aspects of the MultiSeed aligner hit sink that are per-thread.  This
@@ -956,6 +983,7 @@ protected:
  */
 class AlnSinkWrap {
 public:
+	friend AlnSinkStateWrap;
 
 	AlnSinkWrap(
 		AlnSink& g,                // AlnSink being wrapped
@@ -1281,6 +1309,60 @@ protected:
 	EList<std::pair<AlnScore, size_t> > selectBuf_;
 	BTString obuf_;
 	StackedAln staln_;
+};
+
+// Partial state of a AlnSinkWrap
+// Allows for multiple passes on subsets of seeds
+class AlnSinkStateWrap {
+public:
+
+	AlnSinkStateWrap(AlnSinkWrap& msink)
+		: msink_(msink)    // keep track of related sink
+		, st_(msink_.rp_)  // keep dedicated state
+	{}
+
+	void nextRead() {
+		st_.nextRead(msink_.st_);
+	}
+
+	// Merge the state counters back to the parent
+	void merge() {
+		msink_.st_.merge(st_);
+	}
+
+	/**
+	 * Return a const ref to the ReportingState object associated with the
+	 * AlnSinkWrap.
+	 */
+	const ReportingState& state() const { return st_; }
+
+	/**
+	 * Called by the aligner when a new unpaired or paired alignment is
+	 * discovered in the given stage.  This function checks whether the
+	 * addition of this alignment causes the reporting policy to be
+	 * violated (by meeting or exceeding the limits set by -k, -m, -M),
+	 * in which case true is returned immediately and the aligner is
+	 * short circuited.  Otherwise, the alignment is tallied and false
+	 * is returned.
+	 */
+	bool report(
+		int stage,
+		const AlnRes* rs1,
+		const AlnRes* rs2);
+
+#ifndef NDEBUG
+	/**
+	 * Check that hit sink wrapper is internally consistent.
+	 */
+	bool repOk() const {
+		assert(msink_.repOk());
+		assert(st_.repOk());
+		return true;
+	}
+#endif
+protected:
+	AlnSinkWrap& msink_;      // parent msink
+	ReportingState  st_;      // reporting state - what's left to do?
 };
 
 /**

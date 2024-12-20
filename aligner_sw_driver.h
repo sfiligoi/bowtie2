@@ -388,7 +388,7 @@ public:
 		WalkMetrics& wlm,            // group walk left metrics
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
 		PerReadMetrics& prm,         // per-read metrics
-		AlnSinkWrap* mhs,            // HitSink for multiseed-style aligner
+		AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
 		bool reportImmediately,      // whether to report hits immediately to mhs
 		bool& exhaustive);
 
@@ -497,7 +497,7 @@ public:
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
 		SwMetrics& swmMate,          // DP metrics for mate finidng
 		PerReadMetrics& prm,         // per-read metrics for anchor
-		AlnSinkWrap* msink,          // AlnSink wrapper for multiseed-style aligner
+		AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
 		bool swMateImmediately,      // whether to look for mate immediately
 		bool reportImmediately,      // whether to report hits immediately to msink
 		bool discord,                // look for discordant alignments?

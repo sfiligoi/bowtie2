@@ -4572,6 +4572,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					size_t nUniqueSeedsMS[] = {0, 0, 0, 0};
 					size_t nRepeatSeedsMS[] = {0, 0, 0, 0};
 					size_t seedHitTotMS[] = {0, 0, 0, 0};
+
+					const bool all = msinkwrap.allHits();
+					AlnSinkStateWrap sinkstate(msinkwrap);
+					sinkstate.nextRead();
+
 					for(size_t roundi = 0; roundi < nSeedRounds; roundi++) {
 						ca.nextRead(); // Clear cache in preparation for new search
 						shs[0].clearSeeds();
@@ -4586,7 +4591,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 						//}
 						for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 							size_t mate = matemap[matei];
-							if(done[mate] || msinkwrap.state().doneWithMate(mate == 0)) {
+							if(done[mate] || sinkstate.state().doneWithMate(mate == 0)) {
 								// Done with this mate
 								done[mate] = true;
 								continue;
@@ -4603,8 +4608,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							}
 							size_t offset = (interval[mate] * roundi) / nrounds[mate];
 							assert(roundi == 0 || offset > 0);
-							assert(!msinkwrap.maxed());
-							assert(msinkwrap.repOk());
+							assert(sinkstate.repOk());
 							//rnd.init(ROTL(rds[mate]->seed, 10));
 							assert(shs[mate].repOk(&ca.current()));
 							swmSeed.sdatts++;
@@ -4694,13 +4698,12 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 						}
 						for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 							size_t mate = matemap[matei];
-							if(done[mate] || msinkwrap.state().doneWithMate(mate == 0)) {
+							if(done[mate] || sinkstate.state().doneWithMate(mate == 0)) {
 								// Done with this mate
 								done[mate] = true;
 								continue;
 							}
-							assert(!msinkwrap.maxed());
-							assert(msinkwrap.repOk());
+							assert(sinkstate.repOk());
 							//rnd.init(ROTL(rds[mate]->seed, 10));
 							assert(shs[mate].repOk(&ca.current()));
 							if(!seedSumm) {
@@ -4709,7 +4712,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									continue; // on to the next mate
 								}
 								// Sort seed hits into ranks
-								const bool all = msinkwrap.allHits();
 								shs[mate].rankSeedHits(rnd, all);
 								const size_t nsm = 5; // smallness threshold
 								size_t nelt = 0, nsmall = 0;
@@ -4726,6 +4728,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										ca,             // seed alignment cache
 										prm,            // per-read metrics
 										satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
+
 								sd.prioritizeSATups(
 										satpos_base, nelt, nsmall,   // in from populateSATups
 										ebwtFw,         // bowtie index
@@ -4786,7 +4789,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										swmSeed,        // DP metrics, seed extend
 										swmMate,        // DP metrics, mate finding
 										prm,            // per-read metrics
-										&msinkwrap,     // for organizing hits
+										&sinkstate,     // for organizing hits
 										true,           // seek mate immediately
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
@@ -4825,7 +4828,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										wlm,            // group walk left metrics
 										swmSeed,        // DP metrics, seed extend
 										prm,            // per-read metrics
-										&msinkwrap,     // for organizing hits
+										&sinkstate,     // for organizing hits
 										true,           // report hits once found
 										exhaustive[mate]);
 								}
@@ -4836,10 +4839,10 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									// Not done yet
 								} else if(ret == EXTEND_POLICY_FULFILLED) {
 									// Policy is satisfied for this mate at least
-									if(msinkwrap.state().doneWithMate(mate == 0)) {
+									if(sinkstate.state().doneWithMate(mate == 0)) {
 										done[mate] = true;
 									}
-									if(msinkwrap.state().doneWithMate(mate == 1)) {
+									if(sinkstate.state().doneWithMate(mate == 1)) {
 										done[mate^1] = true;
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
@@ -4867,6 +4870,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							}
 						}
 					} // end loop over reseeding rounds
+					sinkstate.merge();
+
 					if(seedsTried > 0) {
 						prm.seedPctUnique = (float)nUniqueSeeds / seedsTried;
 						prm.seedPctRep = (float)nRepeatSeeds / seedsTried;
