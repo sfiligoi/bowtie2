@@ -356,6 +356,7 @@ public:
 		bool& exhaustive);
 
 	//same as above, but assuming eeHits==0 -> eeMode=False
+	//and !mmode
 	//and with seeds already prioritied
 	int extendPrioSeedsNoEE(
 		Read& rd,                    // read to align
@@ -383,7 +384,6 @@ public:
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
-		int tighten,                 // -M score tightening mode
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -454,6 +454,7 @@ public:
 		bool& exhaustive);
 
 	//same as above, but assuming eeHits==0 -> eeMode=False
+	//and !mmode
 	//and with seeds already prioritied
 	int extendPrioSeedsPairedNoEE(
 		Read& rd,                    // mate to align as anchor
@@ -491,7 +492,6 @@ public:
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
-		int tighten,                 // -M score tightening mode
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
 		SwMetrics& swmSeed,          // DP metrics for seed-extend

@@ -1392,6 +1392,7 @@ int SwDriver::extendSeeds(
 }
 
 //same as above, but assuming eeHits==0 -> eeMode=False
+//and !mmode
 //and with seeds already prioritied
 int SwDriver::extendPrioSeedsNoEE(
 	Read& rd,                    // read to align
@@ -1419,7 +1420,6 @@ int SwDriver::extendPrioSeedsNoEE(
 	size_t cminlen,              // use checkpointer if read longer than this
 	size_t cpow2,                // interval between diagonals to checkpoint
 	bool doTri,                  // triangular mini-fills?
-	int tighten,                 // -M score tightening mode
 	RandomSource& rnd,           // pseudo-random source
 	WalkMetrics& wlm,            // group walk left metrics
 	SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -1429,7 +1429,6 @@ int SwDriver::extendPrioSeedsNoEE(
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
 	assert(!reportImmediately || msink != NULL);
-	assert(!reportImmediately || !msink->maxed());
 
 	assert_geq(nceil, 0);
 	assert_leq((size_t)nceil, rd.length());
@@ -1771,7 +1770,6 @@ int SwDriver::extendPrioSeedsNoEE(
 							raw_destU32_,
 							raw_matches_));
 						// Report an unpaired alignment
-						assert(!msink->maxed());
 						if(msink->report(
 							0,
 							mate1 ? &res->alres : NULL,
@@ -1780,38 +1778,6 @@ int SwDriver::extendPrioSeedsNoEE(
 							// Short-circuited because a limit, e.g. -k, -m or
 							// -M, was exceeded
 							return EXTEND_POLICY_FULFILLED;
-						}
-						if(tighten > 0 &&
-						   msink->Mmode() &&
-						   msink->hasSecondBestUnp1())
-						{
-							if(tighten == 1) {
-								if(msink->bestUnp1() >= minsc) {
-									minsc = msink->bestUnp1();
-									if(minsc < perfectScore &&
-									   msink->bestUnp1() == msink->secondBestUnp1())
-									{
-										minsc++;
-									}
-								}
-							} else if(tighten == 2) {
-								if(msink->secondBestUnp1() >= minsc) {
-									minsc = msink->secondBestUnp1();
-									if(minsc < perfectScore) {
-										minsc++;
-									}
-								}
-							} else {
-								TAlScore diff = msink->bestUnp1() - msink->secondBestUnp1();
-								TAlScore bot = msink->secondBestUnp1() + ((diff*3)/4);
-								if(bot >= minsc) {
-									minsc = bot;
-									if(minsc < perfectScore) {
-										minsc++;
-									}
-								}
-							}
-							assert_leq(minsc, perfectScore);
 						}
 					}
 				}
@@ -2932,6 +2898,7 @@ int SwDriver::extendSeedsPaired(
 }
 
 //same as above, but assuming eeHits==0 -> eeMode=False
+//and !mmode
 //and with seeds already prioritied
 int SwDriver::extendPrioSeedsPairedNoEE(
 	Read& rd,                    // mate to align as anchor
@@ -2969,7 +2936,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	size_t cminlen,              // use checkpointer if read longer than this
 	size_t cpow2,                // interval between diagonals to checkpoint
 	bool doTri,                  // triangular mini-fills?
-	int tighten,                 // -M score tightening mode
 	RandomSource& rnd,           // pseudo-random source
 	WalkMetrics& wlm,            // group walk left metrics
 	SwMetrics& swmSeed,          // DP metrics for seed-extend
@@ -2983,7 +2949,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	bool& exhaustive)
 {
 	assert(!reportImmediately || msink != NULL);
-	assert(!reportImmediately || !msink->maxed());
 	assert(!msink->state().doneWithMate(anchor1));
 
 	assert_geq(nceil, 0);
@@ -2993,40 +2958,15 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 
 	const size_t rdlen  = rd.length();
 	const size_t ordlen = ord.length();
-	const TAlScore perfectScore = sc.perfectScore(rdlen);
-	const TAlScore operfectScore = sc.perfectScore(ordlen);
+#ifndef NDEBUG
+	{
+		const TAlScore perfectScore = sc.perfectScore(rdlen);
+		const TAlScore operfectScore = sc.perfectScore(ordlen);
 
-	assert_leq(minsc, perfectScore);
-	assert(oppFilt || ominsc <= operfectScore);
-
-	TAlScore bestPairScore = perfectScore + operfectScore;
-	if(tighten > 0 && msink->Mmode() && msink->hasSecondBestPair()) {
-		// Paired-end alignments should have at least this score from now
-		TAlScore ps;
-		if(tighten == 1) {
-			ps = msink->bestPair();
-		} else if(tighten == 2) {
-			ps = msink->secondBestPair();
-		} else {
-			TAlScore diff = msink->bestPair() - msink->secondBestPair();
-			ps = msink->secondBestPair() + (diff * 3)/4;
-		}
-		if(tighten == 1 && ps < bestPairScore &&
-		   msink->bestPair() == msink->secondBestPair())
-		{
-			ps++;
-		}
-		if(tighten >= 2 && ps < bestPairScore) {
-			ps++;
-		}
-		// Anchor mate must have score at least 'ps' minus the best possible
-		// score for the opposite mate.
-		TAlScore nc = ps - operfectScore;
-		if(nc > minsc) {
-			minsc = nc;
-		}
 		assert_leq(minsc, perfectScore);
+		assert(oppFilt || ominsc <= operfectScore);
 	}
+#endif
 
 	DynProgFramer dpframe(!gReportOverhangs);
 	swa.reset();
@@ -3052,10 +2992,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	mateStreaks_.fill(0);
 
 	while(neltLeft>0) {
-		if(msink->Mmode() && minsc == perfectScore) {
-				// Already found all perfect hits!
-				return EXTEND_PERFECT_SCORE;
-		}
 		for(size_t i = 0; i < gws_.size(); i++) {
 			bool is_small       = satpos_[i].sat.size() < nsm;
 			bool fw             = satpos_[i].pos.fw;
@@ -3376,33 +3312,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 							// Adjust ominsc given the alignment score of the
 							// anchor mate
 							ominsc_cur = ominsc;
-							if(tighten > 0 && msink->Mmode() && msink->hasSecondBestPair()) {
-								// Paired-end alignments should have at least this score from now
-								TAlScore ps;
-								if(tighten == 1) {
-									ps = msink->bestPair();
-								} else if(tighten == 2) {
-									ps = msink->secondBestPair();
-								} else {
-									TAlScore diff = msink->bestPair() - msink->secondBestPair();
-									ps = msink->secondBestPair() + (diff * 3)/4;
-								}
-								if(tighten == 1 && ps < bestPairScore &&
-								   msink->bestPair() == msink->secondBestPair())
-								{
-									ps++;
-								}
-								if(tighten >= 2 && ps < bestPairScore) {
-									ps++;
-								}
-								// Anchor mate must have score at least 'ps' minus the best possible
-								// score for the opposite mate.
-								TAlScore nc = ps - res->alres.score().score();
-								if(nc > ominsc_cur) {
-									ominsc_cur = nc;
-									assert_leq(ominsc_cur, operfectScore);
-								}
-							}
 							oreadGaps = sc.maxReadGaps(ominsc_cur, ordlen);
 							orefGaps  = sc.maxRefGaps (ominsc_cur, ordlen);
 							//oungapped = (oreadGaps == 0 && orefGaps == 0);
@@ -3607,7 +3516,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 									assert(res->repOk());
 									assert(oresGap_.repOk());
 									// Report an unpaired alignment
-									assert(!msink->maxed());
 									assert(!msink->state().done());
 									bool doneUnpaired = false;
 									//if(mixed || discord) {
@@ -3653,39 +3561,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 											// Short-circuited because a limit, e.g.
 											// -k, -m or -M, was exceeded
 											donePaired = true;
-										} else {
-											if(tighten > 0 && msink->Mmode() && msink->hasSecondBestPair()) {
-												// Paired-end alignments should have at least this score from now
-												TAlScore ps;
-												if(tighten == 1) {
-													ps = msink->bestPair();
-												} else if(tighten == 2) {
-													ps = msink->secondBestPair();
-												} else {
-													TAlScore diff = msink->bestPair() - msink->secondBestPair();
-													ps = msink->secondBestPair() + (diff * 3)/4;
-												}
-												if(tighten == 1 && ps < bestPairScore &&
-												   msink->bestPair() == msink->secondBestPair())
-												{
-													ps++;
-												}
-												if(tighten >= 2 && ps < bestPairScore) {
-													ps++;
-												}
-												// Anchor mate must have score at least 'ps' minus the best possible
-												// score for the opposite mate.
-												TAlScore nc = ps - operfectScore;
-												if(nc > minsc) {
-													minsc = nc;
-													assert_leq(minsc, perfectScore);
-													if(minsc > res->alres.score().score()) {
-														// We're done with this anchor
-														break;
-													}
-												}
-												assert_leq(minsc, perfectScore);
-											}
 										}
 									} // if(pairCl != PE_ALS_DISCORD)
 									if(donePaired || doneUnpaired) {
@@ -3714,7 +3589,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 										raw_destU32_,
 										raw_matches_));
 									// Report an unpaired alignment
-									assert(!msink->maxed());
 									assert(!msink->state().done());
 									// Report alignment for mate #1 as an
 									// unpaired alignment.
@@ -3759,7 +3633,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 								raw_destU32_,
 								raw_matches_));
 							// Report an unpaired alignment
-							assert(!msink->maxed());
 							assert(!msink->state().done());
 							// Report alignment for mate #1 as an
 							// unpaired alignment.
