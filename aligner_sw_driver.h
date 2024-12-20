@@ -356,6 +356,7 @@ public:
 		bool& exhaustive);
 
 	//same as above, but assuming eeHits==0 -> eeMode=False
+	//and !mmode
 	int extendSeedsNoEE(
 		Read& rd,                    // read to align
 		bool mate1,                  // true iff rd is mate #1
@@ -382,7 +383,6 @@ public:
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
-		int tighten,                 // -M score tightening mode
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
@@ -454,6 +454,7 @@ public:
 		bool& exhaustive);
 
 	//same as above, but assuming eeHits==0 -> eeMode=False
+	//and !mmode
 	int extendSeedsPairedNoEE(
 		Read& rd,                    // mate to align as anchor
 		Read& ord,                   // mate to align as opposite
@@ -490,7 +491,6 @@ public:
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
-		int tighten,                 // -M score tightening mode
 		AlignmentCacheIface& cs,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
