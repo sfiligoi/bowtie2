@@ -4154,7 +4154,9 @@ static void multiseedSearchWorker(void *vp) {
 	return;
 }
 
-// simplified multiseedSearchWorker when we know there is no ExactUpFront or 1mmUpFront
+// simplified multiseedSearchWorker when we know there is 
+//    no ExactUpFront and no 1mmUpFront
+//    mhits==0 (=> msample==false)
 static void multiseedSearchWorkerNoUpfront(void *vp) {
 	//int tid = *((int*)vp);
 	thread_tracking_pair *p = (thread_tracking_pair*) vp;
@@ -4171,6 +4173,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 
 	assert(!doExactUpFront);
 	assert(!do1mmUpFront);
+	assert(mhits==0);
+	assert(!msample);
 
 	{
 #ifdef PER_THREAD_TIMING
@@ -4745,7 +4749,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
-										tighten,        // -M score tightening mode
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
@@ -4787,7 +4790,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
-										tighten,        // -M score tightening mode
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
@@ -5287,7 +5289,7 @@ inline T* new_worker_thread(void* args)
 	if(bowtie2p5) {
 		return new T(multiseedSearchWorker_2p5, args);
 	} else {
-		if ( (!doExactUpFront) && (!do1mmUpFront)) {
+		if ( (!doExactUpFront) && (!do1mmUpFront) && (mhits==0)) {
 			// use the optimized version whenever possible
 			return new T(multiseedSearchWorkerNoUpfront, args);
 		} else {
