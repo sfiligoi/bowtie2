@@ -4591,9 +4591,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 						//}
 						for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 							size_t mate = matemap[matei];
-							if(done[mate] || sinkstate.state().doneWithMate(mate == 0)) {
+							if(done[mate]) {
 								// Done with this mate
-								done[mate] = true;
 								continue;
 							}
 							if(roundi >= nrounds[mate]) {
@@ -4608,7 +4607,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							}
 							size_t offset = (interval[mate] * roundi) / nrounds[mate];
 							assert(roundi == 0 || offset > 0);
-							assert(sinkstate.repOk());
 							//rnd.init(ROTL(rds[mate]->seed, 10));
 							assert(shs[mate].repOk(&ca.current()));
 							swmSeed.sdatts++;
@@ -4698,12 +4696,10 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 						}
 						for(size_t matei = 0; matei < (paired ? 2:1); matei++) {
 							size_t mate = matemap[matei];
-							if(done[mate] || sinkstate.state().doneWithMate(mate == 0)) {
+							if(done[mate]) {
 								// Done with this mate
-								done[mate] = true;
 								continue;
 							}
-							assert(sinkstate.repOk());
 							//rnd.init(ROTL(rds[mate]->seed, 10));
 							assert(shs[mate].repOk(&ca.current()));
 							if(!seedSumm) {
@@ -4728,6 +4724,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										ca,             // seed alignment cache
 										prm,            // per-read metrics
 										satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
+
+								assert(sinkstate.repOk());
 
 								sd.prioritizeSATups(
 										satpos_base, nelt, nsmall,   // in from populateSATups
@@ -4846,7 +4844,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										done[mate^1] = true;
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
-									// We exhausted this made at least
+									// We exhausted this mate at least
 									done[mate] = true;
 								} else if(ret == EXTEND_EXCEEDED_HARD_LIMIT) {
 									// We exceeded a per-read limit
