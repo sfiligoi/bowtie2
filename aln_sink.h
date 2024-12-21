@@ -1331,10 +1331,16 @@ public:
 	AlnSinkStateWrap(AlnSinkStateWrap&& other)
 		: msink_(other.msink_)
 		, st_(other.st_)
-	{}
+		, done1_(false)
+		, done2_(false)
+	{
+		st_.nextRead(msink_.st_);
+	}
 
 	void nextRead() {
 		st_.nextRead(msink_.st_);
+		done1_ = false;
+		done2_ = false;
 	}
 
 	// Merge the state counters back to the parent
@@ -1348,6 +1354,12 @@ public:
 	 */
 	const ReportingState& state() const { return st_; }
 
+	/*
+	 * Get and set for mate (0-based)
+	 */
+	bool isMateDone(int mate) const { return (mate==0) ? done1_ : done2_; }
+	void setMateDone(int mate) { if (mate==0) { done1_ = true;} else { done2_ = true;} }
+ 
 	/**
 	 * Called by the aligner when a new unpaired or paired alignment is
 	 * discovered in the given stage.  This function checks whether the
@@ -1375,6 +1387,8 @@ public:
 protected:
 	AlnSinkWrap& msink_;      // parent msink
 	ReportingState  st_;      // reporting state - what's left to do?
+	bool            done1_;
+	bool            done2_;
 };
 
 /**

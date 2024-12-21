@@ -4196,6 +4196,14 @@ public:
 		}
 	}
 
+	bool allDoneWithMate(int mate) {
+		bool done = true;
+		for (auto& el : sinklist_) {
+			done &= el.isMateDone(mate);
+		}
+		return done;
+	}
+
 protected:
 	AlnSinkWrap &msinkwrap_;                          // parent sink
 	std::unordered_map<TIndexOffU,size_t> sinkmap_;   // pointers into sinklist_
@@ -4753,31 +4761,36 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							//rnd.init(ROTL(rds[mate]->seed, 10));
 							assert(shs[mate].repOk(&ca.current()));
 							if(!seedSumm) {
-								// If there aren't any seed hits...
-								if(shs[mate].empty()) {
-									continue; // on to the next mate
-								}
-								// Sort seed hits into ranks
-								shs[mate].rankSeedHits(rnd, all);
-								const size_t nsm = 5; // smallness threshold
-								size_t nelt = 0, nsmall = 0;
-								auto& satpos_base = sd.getUnsortedSatPos();
+							   // If there aren't any seed hits...
+							   if(shs[mate].empty()) {
+								continue; // on to the next mate
+							   }
+							   // Sort seed hits into ranks
+							   shs[mate].rankSeedHits(rnd, all);
+							   const size_t nsm = 5; // smallness threshold
+							   size_t nelt = 0, nsmall = 0;
+							   auto& satpos_base = sd.getUnsortedSatPos();
 
-								sd.populateSATups(
-										*rds[mate],     // read
-										shs[mate],      // seed hits to extend into full alignments
-										ebwtFw,         // bowtie index
-										ebwtBw,         // rev bowtie index
-										multiseedMms,   // # mms allowed in a seed
-										doExtend,       // extend seed hits
-										nsm,           // smallness threshold
-										ca,             // seed alignment cache
-										prm,            // per-read metrics
-										satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
+							   sd.populateSATups(
+									*rds[mate],     // read
+									shs[mate],      // seed hits to extend into full alignments
+									ebwtFw,         // bowtie index
+									ebwtBw,         // rev bowtie index
+									multiseedMms,   // # mms allowed in a seed
+									doExtend,       // extend seed hits
+									nsm,           // smallness threshold
+									ca,             // seed alignment cache
+									prm,            // per-read metrics
+									satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
 
-								const TIndexOffU tidx = 0; // TODO: Fixed for now, should be dynamic
+							   for (TIndexOffU tidx = 0; tidx<1; tidx++) { // TODO: Fixed for now, should be dynamic
 								AlnSinkStateWrap &sinkstate = sinkmap.get(tidx);
 								assert(sinkstate.repOk());
+
+								if(sinkstate.isMateDone(mate)) {
+									// Done with this mate for this state
+									continue;
+								}
 
 								sd.prioritizeSATups(
 										satpos_base, nelt, nsmall,   // in from populateSATups
@@ -4890,17 +4903,17 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 								} else if(ret == EXTEND_POLICY_FULFILLED) {
 									// Policy is satisfied for this mate at least
 									if(sinkstate.state().doneWithMate(mate == 0)) {
-										done[mate] = true;
+										sinkstate.setMateDone(mate);
 									}
 									if(sinkstate.state().doneWithMate(mate == 1)) {
-										done[mate^1] = true;
+										sinkstate.setMateDone(mate^1);
 									}
 								} else if(ret == EXTEND_PERFECT_SCORE) {
 									// We exhausted this mate at least
-									done[mate] = true;
+									sinkstate.setMateDone(mate);
 								} else if(ret == EXTEND_EXCEEDED_HARD_LIMIT) {
 									// We exceeded a per-read limit
-									done[mate] = true;
+									sinkstate.setMateDone(mate);
 								} else if(ret == EXTEND_EXCEEDED_SOFT_LIMIT) {
 									// Not done yet
 								} else {
@@ -4908,6 +4921,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									cerr << "Bad return value: " << ret << endl;
 									throw 1;
 								}
+							   }
+
+							   // update done only if all of the states were set to true
+							   if (sinkmap.allDoneWithMate(0)) done[0] = true;
+							   if (sinkmap.allDoneWithMate(1)) done[1] = true;
 							} // if(!seedSumm)
 						} // for(size_t matei = 0; matei < 2; matei++)
 
