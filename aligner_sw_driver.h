@@ -151,6 +151,23 @@ struct SeedPos {
 };
 
 /**
+ * Projection of sat in the forward index
+ */
+struct SAIdx {
+	TIndexOffU tidx;
+	TIndexOffU toff;
+	TIndexOffU tlen;
+	bool straddled;
+
+	void reset() {
+		tidx = 0;
+		toff = 0;
+		tlen = 0;
+		straddled = false;
+	}
+};
+
+/**
  * An SATuple along with the associated seed position.
  */
 struct SATupleAndPos {
@@ -160,6 +177,8 @@ struct SATupleAndPos {
 	size_t  origSz; // size of range this was taken from
 	size_t  nlex;   // # position we can extend seed hit to left w/o edit
 	size_t  nrex;   // # position we can extend seed hit to right w/o edit
+
+	EList<SAIdx,16> sai; // map of sat to idx
 	
 	bool operator<(const SATupleAndPos& o) const {
 		if(sat < o.sat) return true;
@@ -169,6 +188,30 @@ struct SATupleAndPos {
 
 	bool operator==(const SATupleAndPos& o) const {
 		return sat == o.sat && pos == o.pos;
+	}
+
+	// get one element out of another satpos
+	void init(const SATupleAndPos& other, size_t idx, bool copySai, bool copyEx = false) {
+		SATuple s;
+		TSlice o;
+		o.init(other.sat.offs, idx, idx+1);
+		s.init(other.sat.key, (TIndexOffU)(other.sat.topf + idx), OFF_MASK, o);
+		sat = s;
+		pos = other.pos;
+		origSz = other.origSz;
+		if (copyEx) {
+			nlex = other.nlex;
+			nrex = other.nrex;
+		} else {
+			nlex = 0;
+			nrex = 0;
+		}
+		if (copySai) {
+			sai.resizeNoCopy(1);
+			sai[0] = other.sai[idx];
+		} else {
+			sai.clear();
+		}
 	}
 };
 
@@ -549,6 +592,21 @@ public:
 		size_t& nelt_out,            // out: # elements total
 		size_t& nsmall_out);         // out: # small elements
 
+	/**
+	 * Given seed results, advance them, so we know which genome they belong to.
+	 */
+	void advanceSATups(
+		EList<SATupleAndPos, 16>& satpos, // in/out: elements to be advanced
+		const Ebwt& ebwtFw,          // BWT
+		const BitPairReference& ref, // Reference strings
+		RandomSource& rnd,           // pseudo-random generator
+		WalkMetrics& wlm,            // group walk left metrics
+		PerReadMetrics& prm);        // per-read metrics
+
+	/**
+	 * Given seed results, set up all of our state for resolving and keeping
+	 * track of reference offsets for hits.
+	 */
 	void prioritizeSATups(
 		EList<SATupleAndPos, 16>& satpos_base, // in: unsorted elements
 		size_t nelt,                 // in: # elements total

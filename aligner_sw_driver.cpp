@@ -602,6 +602,49 @@ void SwDriver::populateSATups(
 }
 
 /**
+ * Given seed results, advance them, so we know which genome they belong to.
+ */
+void SwDriver::advanceSATups(
+	EList<SATupleAndPos, 16>& satpos, // in/out: elements to be advanced
+	const Ebwt& ebwtFw,          // BWT
+	const BitPairReference& ref, // Reference strings
+	RandomSource& rnd,           // pseudo-random generator
+	WalkMetrics& wlm,            // group walk left metrics
+	PerReadMetrics& prm)         // per-read metrics
+{
+	const size_t nsatops = satpos.size();
+	GroupWalk2S<TSlice, 16> gws; // GroupWalk2S is a big object, reuse between loops
+	for (size_t i=0; i<nsatops; i++) {
+		const size_t nelt = satpos[i].sat.offs.size();
+		SARangeWithOffs<TSlice> sa;
+		sa.offs = satpos[i].sat.offs;
+		sa.topf = satpos[i].sat.topf;
+		sa.len = satpos[i].sat.key.len;
+		gws.init(
+			ebwtFw, // forward Bowtie index
+			ref,    // reference sequences
+			sa,     // SA tuples: ref hit, salist range
+			rnd,    // pseudo-random generator
+			wlm);   // metrics
+		satpos[i].sai.resizeNoCopy(nelt);
+		for (size_t elt=0; elt<nelt; elt++) {
+			WalkResult wr;
+			gws.advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+			SAIdx& sai = satpos[i].sai[elt];
+			sai.reset();
+			ebwtFw.joinedToTextOff(
+						wr.elt.len,
+						wr.toff,
+						sai.tidx,
+						sai.toff,
+						sai.tlen,
+						false,     // reject straddlers? (eeMode?=true)
+						sai.straddled); // did it straddle?
+		}
+	}
+}
+
+/**
  * Given seed results, set up all of our state for resolving and keeping
  * track of reference offsets for hits.
  */
