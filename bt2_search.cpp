@@ -4794,6 +4794,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									prm,            // per-read metrics
 									satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
 							   if (independentGenome) {
+								// must advance to get the genome id before the loop
 								sd.advanceSATups(
 										satpos_base,   // in/out from populateSATups
 										ebwtFw,         // bowtie index
@@ -4822,7 +4823,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										nelt,          // out: # elements total
-										all);          // report all hits?
+										all,           // report all hits?
+										!independentGenome); // Do I need gwms?
 
 								int ret = 0;
 								if (shs[mate].nonzeroOffsets()==0) {
@@ -4876,6 +4878,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
 										gReportMixed,   // look for unpaired alns?
+										independentGenome, // assume_advanceda, use gws_ if false
 										exhaustive[mate]);
 									// Might be done, but just with this mate
 								} else {
@@ -4912,6 +4915,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										prm,            // per-read metrics
 										&sinkstate,     // for organizing hits
 										true,           // report hits once found
+										independentGenome, // assume_advanced, use gws_ if false
 										exhaustive[mate]);
 								}
 								assert_gt(ret, 0);

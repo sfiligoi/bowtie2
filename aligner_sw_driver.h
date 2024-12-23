@@ -433,6 +433,7 @@ public:
 		PerReadMetrics& prm,         // per-read metrics
 		AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
 		bool reportImmediately,      // whether to report hits immediately to mhs
+		bool assume_advanced,        // were the elements already advanced? (need gws_ if false)
 		bool& exhaustive);
 
 	/**
@@ -545,6 +546,7 @@ public:
 		bool reportImmediately,      // whether to report hits immediately to msink
 		bool discord,                // look for discordant alignments?
 		bool mixed,                  // look for unpaired as well as paired alns?
+		bool assume_advanced,        // were the elements already advanced? (need gws_ if false)
 		bool& exhaustive);
 
 	/**
@@ -619,7 +621,8 @@ public:
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
 		size_t& nelt_out,            // out: # elements total
-		bool all);                    // report all hits?
+		bool all,                    // report all hits?
+		bool need_gws);              // should I configure gws_?
 
 	void populateAndPrioritizeSATups(
 		const Read& read,            // read

@@ -657,7 +657,8 @@ void SwDriver::prioritizeSATups(
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
 	size_t& nelt_out,            // out: # elements total
-	bool all)                    // report all hits?
+	bool all,                    // report all hits?
+	bool need_gws)               // should I configure gws_?
 {
 	size_t nrange = 0;
 	//constexpr bool keepWhole = false;
@@ -667,14 +668,14 @@ void SwDriver::prioritizeSATups(
 	assert_leq(nsmall, nrange);
 	satpos_base.sort();
 
-	gws_.clear();
+	if (need_gws) gws_.clear();
 	rands_.clear();
 	rands2_.clear();
 	satpos_.clear();
 	// Resize satups_ list so that ranges having elements that we might
 	// possibly explore are present
 	satpos_.ensure(min(maxelt, nelt));
-	gws_.ensure(min(maxelt, nelt));
+	if (need_gws) gws_.ensure(min(maxelt, nelt));
 	rands_.ensure(min(maxelt, nelt));
 	rands2_.ensure(min(maxelt, nelt));
 
@@ -691,17 +692,19 @@ void SwDriver::prioritizeSATups(
 	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
 		satpos_.expand();
 		satpos_.back() = satpos_base[j];
-		gws_.expand();
-		SARangeWithOffs<TSlice> sa;
-		sa.topf = satpos_.back().sat.topf;
-		sa.len = satpos_.back().sat.key.len;
-		sa.offs = satpos_.back().sat.offs;
-		gws_.back().init(
-			ebwtFw, // forward Bowtie index
-			ref,    // reference sequences
-			sa,     // SA tuples: ref hit, salist range
-			wlm);   // metrics
-		assert(gws_.back().initialized());
+		if (need_gws) {
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = satpos_.back().sat.topf;
+			sa.len = satpos_.back().sat.key.len;
+			sa.offs = satpos_.back().sat.offs;
+			gws_.back().init(
+				ebwtFw, // forward Bowtie index
+				ref,    // reference sequences
+				sa,     // SA tuples: ref hit, salist range
+				wlm);   // metrics
+			assert(gws_.back().initialized());
+		}
 		rands_.expand();
 		rands_.back().init(satpos_.back().sat.size(), all);
 		nelt_added += satpos_.back().sat.size();
@@ -741,26 +744,27 @@ void SwDriver::prioritizeSATups(
 			rowsamp_.finishedRange(ri - nsmall);
 		}
 		// Add the element to the satpos_ list
-		SATuple sat;
-		TSlice o;
-		o.init(satpos_base[ri].sat.offs, r, r+1);
-		sat.init(satpos_base[ri].sat.key, (TIndexOffU)(satpos_base[ri].sat.topf + r), OFF_MASK, o);
 		satpos_.expand();
-		satpos_.back().sat = sat;
-		satpos_.back().origSz = satpos_base[ri].origSz;
-		satpos_.back().pos = satpos_base[ri].pos;
-		// Initialize GroupWalk object
-		gws_.expand();
-		SARangeWithOffs<TSlice> sa;
-		sa.topf = sat.topf;
-		sa.len = sat.key.len;
-		sa.offs = sat.offs;
-		gws_.back().init(
-			ebwtFw, // forward Bowtie index
-			ref,    // reference sequences
-			sa,     // SA tuples: ref hit, salist range
-			wlm);   // metrics
-		assert(gws_.back().initialized());
+		satpos_.back().init(
+				satpos_base[ri],
+				r,
+				!need_gws,  // we either need sai or gwms_, not both
+				false);
+		if (need_gws) {
+			SATuple& sat = satpos_.back().sat;
+			// Initialize GroupWalk object
+			gws_.expand();
+			SARangeWithOffs<TSlice> sa;
+			sa.topf = sat.topf;
+			sa.len = sat.key.len;
+			sa.offs = sat.offs;
+			gws_.back().init(
+				ebwtFw, // forward Bowtie index
+				ref,    // reference sequences
+				sa,     // SA tuples: ref hit, salist range
+				wlm);   // metrics
+			assert(gws_.back().initialized());
+		}
 		// Initialize random selector
 		rands_.expand();
 		rands_.back().init(1, all);
@@ -805,7 +809,8 @@ void SwDriver::populateAndPrioritizeSATups(
 		maxelt, lensq, szsq,
 		rnd, wlm,
 		nelt_out,
-		all);
+		all,
+		true);
 }
 
 // debug version
@@ -1462,6 +1467,7 @@ int SwDriver::extendPrioSeedsNoEE(
 	PerReadMetrics& prm,         // per-read metrics
 	AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
 	bool reportImmediately,      // whether to report hits immediately to msink
+	bool assume_advanced,        // were the elements already advanced? (need gws_ if false)
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
 	assert(!reportImmediately || msink != NULL);
@@ -1487,15 +1493,15 @@ int SwDriver::extendPrioSeedsNoEE(
 	size_t neltLeft = 0, eltsDone = 0;
 	const size_t rows = rdlen;
 	{
-		assert_eq(gws_.size(), rands_.size());
-		assert_eq(gws_.size(), satpos_.size());
+		assert_eq(satpos_.size(), rands_.size());
+		if (!assume_advanced) assert_eq(satpos_.size(), gws_.size());
 		neltLeft = nelt;
 	}
 	while(neltLeft>0) {
 		if(minsc == perfectScore) {
 				return EXTEND_PERFECT_SCORE; // Already found all perfect hits!
 		}
-		for(size_t i = 0; i < gws_.size(); i++) {
+		for(size_t i = 0; i < satpos_.size(); i++) {
 			bool is_small       = satpos_[i].sat.size() < nsm;
 			bool fw             = satpos_[i].pos.fw;
 			uint32_t rdoff      = satpos_[i].pos.rdoff;
@@ -1512,7 +1518,6 @@ int SwDriver::extendPrioSeedsNoEE(
 			// back to this range later.
 			size_t riter = 0;
 			while(!rands_[i].done() && (first || is_small)) {
-				assert(!gws_[i].done());
 				riter++;
 				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
@@ -1526,28 +1531,42 @@ int SwDriver::extendPrioSeedsNoEE(
 				prm.nExIters++;
 				first = false;
 				// Resolve next element offset
-				WalkResult wr;
 				size_t elt = rands_[i].next(rnd);
+				TIndexOffU wr_toff;
+				TIndexOffU wr_len;
+				TIndexOffU tidx = 0, toff = 0, tlen = 0;
+				bool straddled = false;
 				//cerr << "elt=" << elt << endl;
-				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_[i].sat.topf;
-				sa.len = satpos_[i].sat.key.len;
-				sa.offs = satpos_[i].sat.offs;
-				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				if (assume_advanced) {
+					wr_toff = satpos_[i].sat.offs[elt];
+					wr_len  = satpos_[i].sat.key.len;
+					tidx = satpos_[i].sai[elt].tidx;
+					toff = satpos_[i].sai[elt].toff;
+					tlen = satpos_[i].sai[elt].tlen;
+					straddled = satpos_[i].sai[elt].straddled;
+				} else {
+					assert(!gws_[i].done());
+					SARangeWithOffs<TSlice> sa;
+					sa.topf = satpos_[i].sat.topf;
+					sa.len = satpos_[i].sat.key.len;
+					sa.offs = satpos_[i].sat.offs;
+					WalkResult wr;
+					gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+					wr_toff = wr.toff;
+					wr_len  = wr.elt.len;
+					ebwtFw.joinedToTextOff(
+						wr_len,
+						wr_toff,
+						tidx,
+						toff,
+						tlen,
+						false,     // reject straddlers? (eeMode?=true)
+						straddled); // did it straddle?
+				}
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
-				assert_neq(OFF_MASK, wr.toff);
-				TIndexOffU tidx = 0, toff = 0, tlen = 0;
-				bool straddled = false;
-				ebwtFw.joinedToTextOff(
-					wr.elt.len,
-					wr.toff,
-					tidx,
-					toff,
-					tlen,
-					false,     // reject straddlers? (eeMode?=true)
-					straddled); // did it straddle?
+				assert_neq(OFF_MASK, wr_toff);
 				if(tidx == OFF_MASK) {
 					// The seed hit straddled a reference boundary so the seed hit
 					// isn't valid
@@ -1556,8 +1575,8 @@ int SwDriver::extendPrioSeedsNoEE(
 #ifndef NDEBUG
 				if(!straddled) { // Check that seed hit matches reference
 					uint64_t key = satpos_[i].sat.key.seq;
-					for(size_t k = 0; k < wr.elt.len; k++) {
-						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
+					for(size_t k = 0; k < wr_len; k++) {
+						int c = ref.getBase(tidx, toff + wr_len - k - 1);
 						assert_leq(c, 3);
 						int ck = (int)(key & 3);
 						key >>= 2;
@@ -1641,7 +1660,7 @@ int SwDriver::extendPrioSeedsNoEE(
 						swmSeed.ungapsucc++;
 					}
 				}
-				// int64_t pastedRefoff = (int64_t)wr.toff - rdoff;
+				// int64_t pastedRefoff = (int64_t)wr_toff - rdoff;
 				DPRect rect;
 				if(state == FOUND_NONE) {
 					found = dpframe.frameSeedExtensionRect(
@@ -1821,7 +1840,7 @@ int SwDriver::extendPrioSeedsNoEE(
 				// At this point we know that we aren't bailing, and will
 				// continue to resolve seed hits.  
 
-			} // while(!gws_[i].done())
+			} // while(!rands_[i].done())
 		}
 	}
 	// Short-circuited because a limit, e.g. -k, -m or -M, was exceeded
@@ -2982,6 +3001,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool discord,                // look for discordant alignments?
 	bool mixed,                  // look for unpaired as well as paired alns?
+	bool assume_advanced,        // were the elements already advanced?
 	bool& exhaustive)
 {
 	assert(!reportImmediately || msink != NULL);
@@ -3020,15 +3040,15 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	const size_t rows = rdlen;
 	const size_t orows  = ordlen;
 	{
-		assert_eq(gws_.size(), rands_.size());
-		assert_eq(gws_.size(), satpos_.size());
+		assert_eq(satpos_.size(), rands_.size());
+		if (assume_advanced) assert_eq(satpos_.size(), gws_.size());
 		neltLeft = nelt;
 	}
-	mateStreaks_.resize(gws_.size());
+	mateStreaks_.resize(satpos_.size());
 	mateStreaks_.fill(0);
 
 	while(neltLeft>0) {
-		for(size_t i = 0; i < gws_.size(); i++) {
+		for(size_t i = 0; i < satpos_.size(); i++) {
 			bool is_small       = satpos_[i].sat.size() < nsm;
 			bool fw             = satpos_[i].pos.fw;
 			uint32_t rdoff      = satpos_[i].pos.rdoff;
@@ -3067,29 +3087,43 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 				}
 				prm.nExIters++;
 				first = false;
-				assert(!gws_[i].done());
 				// Resolve next element offset
-				WalkResult wr;
 				size_t elt = rands_[i].next(rnd);
-				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_[i].sat.topf;
-				sa.len = satpos_[i].sat.key.len;
-				sa.offs = satpos_[i].sat.offs;
-				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				TIndexOffU wr_toff;
+				TIndexOffU wr_len;
+				TIndexOffU tidx = 0, toff = 0, tlen = 0;
+				bool straddled = false;
+				//cerr << "elt=" << elt << endl;
+				if (assume_advanced) {
+					wr_toff = satpos_[i].sat.offs[elt];
+					wr_len  = satpos_[i].sat.key.len;
+					tidx = satpos_[i].sai[elt].tidx;
+					toff = satpos_[i].sai[elt].toff;
+					tlen = satpos_[i].sai[elt].tlen;
+					straddled = satpos_[i].sai[elt].straddled;
+				} else {
+					assert(!gws_[i].done());
+					SARangeWithOffs<TSlice> sa;
+					sa.topf = satpos_[i].sat.topf;
+					sa.len = satpos_[i].sat.key.len;
+					sa.offs = satpos_[i].sat.offs;
+					WalkResult wr;
+					gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+					wr_toff = wr.toff;
+					wr_len  = wr.elt.len;
+					ebwtFw.joinedToTextOff(
+						wr_len,
+						wr_toff,
+						tidx,
+						toff,
+						tlen,
+						false,     // reject straddlers? (eeMode?=true)
+						straddled); // did it straddle?
+				}
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
-				assert_neq(OFF_MASK, wr.toff);
-				TIndexOffU tidx = 0, toff = 0, tlen = 0;
-				bool straddled = false;
-				ebwtFw.joinedToTextOff(
-					wr.elt.len,
-					wr.toff,
-					tidx,
-					toff,
-					tlen,
-					false,       // reject straddlers? (eeMode?=true)
-					straddled);   // straddled?
+				assert_neq(OFF_MASK, wr_toff);
 				if(tidx == OFF_MASK) {
 					// The seed hit straddled a reference boundary so the seed hit
 					// isn't valid
@@ -3098,8 +3132,8 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 #ifndef NDEBUG
 				if(!straddled) { // Check that seed hit matches reference
 					uint64_t key = satpos_[i].sat.key.seq;
-					for(size_t k = 0; k < wr.elt.len; k++) {
-						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
+					for(size_t k = 0; k < wr_len; k++) {
+						int c = ref.getBase(tidx, toff + wr_len - k - 1);
 						assert_leq(c, 3);
 						int ck = (int)(key & 3);
 						key >>= 2;
@@ -3175,7 +3209,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 						swmSeed.ungapsucc++;
 					}
 				}
-				// int64_t pastedRefoff = (int64_t)wr.toff - rdoff;
+				// int64_t pastedRefoff = (int64_t)wr_toff - rdoff;
 				DPRect rect;
 				if(state == FOUND_NONE) {
 					found = dpframe.frameSeedExtensionRect(
@@ -3725,8 +3759,8 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 				}
 				// At this point we know that we aren't bailing, and will continue to resolve seed hits.  
 
-			} // while(!gw.done())
-		} // for(size_t i = 0; i < gws_.size(); i++)
+			} // while(!rands_[i].done())
+		} // for(size_t i = 0; i < satpos_.size(); i++)
 	}
 	return EXTEND_EXHAUSTED_CANDIDATES;
 }
