@@ -235,6 +235,7 @@ static size_t maxUgStreak;    // stop after this many ungap fails in a row
 static size_t maxDpStreak;    // stop after this many dp fails in a row
 static size_t maxStreakIncr;  // amt to add to streak for each -k > 1
 static size_t maxMateStreak;  // stop seed range after this many mate-find fails
+static bool  independentGenome; // Tread gemones independently
 static bool doExtend;         // extend seed hits
 static bool enable8;          // use 8-bit SSE where possible?
 static size_t cminlen;        // longer reads use checkpointing
@@ -415,6 +416,7 @@ static void resetOptions() {
 	penNCatPair	    = DEFAULT_N_CAT_PAIR;	// concatenate mates before N filtering?
 	localAlign	    = false;	// do local alignment in DP steps
 	noisyHpolymer	    = false;
+	independentGenome   = false;
 	penRdGapConst	    = DEFAULT_READ_GAP_CONST;
 	penRfGapConst	    = DEFAULT_REF_GAP_CONST;
 	penRdGapLinear	    = DEFAULT_READ_GAP_LINEAR;
@@ -628,6 +630,7 @@ static struct option long_options[] = {
 	{(char*)"no-exact-upfront",            no_argument,        0,                   ARG_EXACT_UPFRONT_NO},
 	{(char*)"no-1mm-upfront",              no_argument,        0,                   ARG_1MM_UPFRONT_NO},
 	{(char*)"1mm-minlen",                  required_argument,  0,                   ARG_1MM_MINLEN},
+	{(char*)"genome-independent",          no_argument,        0,                   ARG_GENOME_IND},
 	{(char*)"seed-off",                    required_argument,  0,                   'O'},
 	{(char*)"seed-boost",                  required_argument,  0,                   ARG_SEED_BOOST_THRESH},
 	{(char*)"read-times",                  no_argument,        0,                   ARG_READ_TIMES},
@@ -831,6 +834,8 @@ static void printUsage(ostream& out) {
 	    << " Effort:" << endl
 	    << "  -D <int>           give up extending after <int> failed extends in a row (15)" << endl
 	    << "  -R <int>           for reads w/ repetitive seeds, try <int> sets of seeds (2)" << endl
+	    << "  --genome-independent" << endl
+	    << "                     Apply all limits on a per-genome basis" << endl
 	    << endl
 	    << " Paired-end:" << endl
 	    << "  -I/--minins <int>  minimum fragment length (0)" << endl
@@ -1408,6 +1413,7 @@ static void parseOption(int next_option, const char *arg) {
 	case ARG_EXACT_UPFRONT_NO: doExactUpFront = false; break;
 	case ARG_1MM_UPFRONT_NO:   do1mmUpFront   = false; break;
 	case ARG_1MM_MINLEN:       do1mmMinLen = parse<size_t>(arg); break;
+	case ARG_GENOME_IND: independentGenome   = true; break;
 	case ARG_NOISY_HPOLY: noisyHpolymer = true; break;
 	case 'x': bt2index = arg; break;
 	case ARG_PRESET_VERY_FAST_LOCAL: localAlign = true;
@@ -1647,6 +1653,11 @@ static void parseOptions(int argc, const char **argv) {
 
 	if (!saw_bam && saw_align_paired_reads) {
 		cerr << "--align-paired-reads can only be used when aligning BAM reads." << endl;
+		exit(1);
+	}
+	if (independentGenome && (doExactUpFront || do1mmUpFront || (mhits>0))) {
+		cerr << "--genome-independent cannot be used with "
+		     << "--exact-upfront, --1mm-upfront or -m." << endl;
 		exit(1);
 	}
 	// Now parse all the presets.  Might want to pick which presets version to
@@ -5399,6 +5410,13 @@ inline T* new_worker_thread(void* args)
 			return new T(multiseedSearchWorkerNoUpfront, args);
 		} else {
 			// fall back on the more generic version, else
+			if (independentGenome) {
+				// should have been caught during parameter parsing
+				// but double check here, too
+				cerr << "Error: --genome-independent cannot be used with "
+				     << "--exact-upfront, --1mm-upfront or -m." << endl;
+				throw 1;
+			}
 			return new T(multiseedSearchWorker, args);
 		}
 	}
