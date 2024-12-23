@@ -4798,7 +4798,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										satpos_base,   // in/out from populateSATups
 										ebwtFw,         // bowtie index
 										ref,            // packed reference strings
-										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
 										prm);           // per-read metrics
 							   }

@@ -599,7 +599,6 @@ public:
 		EList<SATupleAndPos, 16>& satpos, // in/out: elements to be advanced
 		const Ebwt& ebwtFw,          // BWT
 		const BitPairReference& ref, // Reference strings
-		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
 		PerReadMetrics& prm);        // per-read metrics
 
