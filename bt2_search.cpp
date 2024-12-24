@@ -4362,6 +4362,14 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 
 		PerReadMetrics prm;
 
+		// internal temp container used for independent genome work
+		std::unordered_set<TIndexOffU> tidx_set;
+		if (!independentGenome) tidx_set.insert(0); // we use a single arbitrary element in standard mode
+
+		// internal temps for filtering SATuple, SeedPos pairs
+		EList<SATupleAndPos, 16> satpos_base;
+		EList<SATupleAndPos, 16> satpos_filtered;
+
 		// Used by thread with threadid == 1 to measure time elapsed
 		time_t iTime = time(0);
 
@@ -4778,9 +4786,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 							   }
 							   // Sort seed hits into ranks
 							   shs[mate].rankSeedHits(rnd, all);
-							   const size_t nsm = 5; // smallness threshold
 							   size_t nelt = 0, nsmall = 0;
-							   auto& satpos_base = sd.getUnsortedSatPos();
 
 							   sd.populateSATups(
 									*rds[mate],     // read
@@ -4789,7 +4795,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									ebwtBw,         // rev bowtie index
 									multiseedMms,   // # mms allowed in a seed
 									doExtend,       // extend seed hits
-									nsm,           // smallness threshold
 									ca,             // seed alignment cache
 									prm,            // per-read metrics
 									satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
@@ -4800,10 +4805,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										ebwtFw,         // bowtie index
 										ref,            // packed reference strings
 										wlm,            // group walk left metrics
-										prm);           // per-read metrics
+										prm,           // per-read metrics
+										tidx_set);     // out: list of all the tidxs found
 							   }
 
-							   for (TIndexOffU tidx = 0; tidx<1; tidx++) { // TODO: Fixed for now, should be dynamic
+							   for (TIndexOffU tidx : tidx_set) {
 								AlnSinkStateWrap &sinkstate = sinkmap.get(tidx);
 								assert(sinkstate.repOk());
 
@@ -4811,8 +4817,28 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									// Done with this mate for this state
 									continue;
 								}
+								if (independentGenome) {
+									sd.filterSATups(
+										satpos_base,   // in from populateSATups
+										tidx,
+										satpos_filtered, nelt, nsmall);  // out, to be passed to prioritizeSATups
 
-								sd.prioritizeSATups(
+									sd.prioritizeSATups(
+										satpos_filtered, nelt, nsmall,   // in from filter
+										ebwtFw,         // bowtie index
+										ebwtBw,         // rev bowtie index
+										ref,            // packed reference strings
+										mxIter[mate],   // max extend loop iters
+										true,          // square extended length
+										true,          // square SA range size
+										rnd,            // pseudo-random source
+										wlm,            // group walk left metrics
+										nelt,          // out: # elements total
+										all,           // report all hits?
+										!independentGenome); // Do I need gwms?
+								} else {
+									// prioritize all of the elsements
+									sd.prioritizeSATups(
 										satpos_base, nelt, nsmall,   // in from populateSATups
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
@@ -4825,6 +4851,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										nelt,          // out: # elements total
 										all,           // report all hits?
 										!independentGenome); // Do I need gwms?
+								}
+
 
 								int ret = 0;
 								if (shs[mate].nonzeroOffsets()==0) {
@@ -4837,7 +4865,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										*rds[mate ^ 1], // mate to align as opp.
 										mate == 0,      // anchor is mate 1?
 										!filt[mate ^ 1],// opposite mate filtered out?
-										nsm,            // smallness threshold
 										nelt,           // # elements total
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index
@@ -4886,7 +4913,6 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 									ret = sd.extendPrioSeedsNoEE(
 										*rds[mate],     // read
 										mate == 0,      // mate #1?
-										nsm,            // smallness threshold
 										nelt,           // # elements total
 										ebwtFw,         // bowtie index
 										ebwtBw,         // rev bowtie index

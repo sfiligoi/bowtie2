@@ -492,13 +492,13 @@ void SwDriver::populateSATups(
 	const Ebwt* ebwtBw,          // BWT
 	int seedmms,                 // # mismatches allowed in seed
 	bool doExtend,               // do extension of seed hits?
-	size_t nsm,                  // if range as <= nsm elts, it's "small"
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	PerReadMetrics& prm,         // per-read metrics
 	EList<SATupleAndPos, 16>& satpos, // out: elements
 	size_t& nelt_out,            // out: # elements total
 	size_t& nsmall_out)          // out: # small elements
 {
+	const size_t nsm = SMALL_N_THRESHOLD; // smallness threshold
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	const int matei = (read.mate <= 1 ? 0 : 1);
 	satpos.clear();
@@ -607,12 +607,14 @@ void SwDriver::advanceSATups(
 	const Ebwt& ebwtFw,          // BWT
 	const BitPairReference& ref, // Reference strings
 	WalkMetrics& wlm,            // group walk left metrics
-	PerReadMetrics& prm)         // per-read metrics
+	PerReadMetrics& prm,         // per-read metrics
+	std::unordered_set<TIndexOffU> &tidx_set)     // out: list of all the tidxs found
 {
+	tidx_set.clear();
 	const size_t nsatops = satpos.size();
 	GroupWalk2S<TSlice, 16> gws; // GroupWalk2S is a big object, reuse between loops
 	for (size_t i=0; i<nsatops; i++) {
-		const size_t nelt = satpos[i].sat.offs.size();
+		const uint32_t nelt = satpos[i].sat.offs.size();
 		SARangeWithOffs<TSlice> sa;
 		sa.offs = satpos[i].sat.offs;
 		sa.topf = satpos[i].sat.topf;
@@ -623,7 +625,7 @@ void SwDriver::advanceSATups(
 			sa,     // SA tuples: ref hit, salist range
 			wlm);   // metrics
 		satpos[i].sai.resizeNoCopy(nelt);
-		for (size_t elt=0; elt<nelt; elt++) {
+		for (uint32_t elt=0; elt<nelt; elt++) {
 			WalkResult wr;
 			gws.advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
 			SAIdx& sai = satpos[i].sai[elt];
@@ -636,8 +638,52 @@ void SwDriver::advanceSATups(
 						sai.tlen,
 						false,     // reject straddlers? (eeMode?=true)
 						sai.straddled); // did it straddle?
+			if(sai.tidx != OFF_MASK) {
+				tidx_set.insert(sai.tidx); // being a set, it is harmless to insert more than once
+			}
 		}
 	}
+}
+
+void SwDriver::filterSATups(
+	EList<SATupleAndPos, 16>& satpos_base,     // in: unsorted elements
+	TIndexOffU                tidx,
+	EList<SATupleAndPos, 16>& satpos_filtered, // out: filtered elements
+	size_t& nelt_out,            // out: # elements total
+	size_t& nsmall_out)          // out: # small elements
+{
+	const size_t nsm = SMALL_N_THRESHOLD; // smallness threshold
+	size_t nelt = 0;
+	size_t nsmall = 0;
+	satpos_filtered.clear();
+	const size_t nsatops = satpos_base.size();
+	for (size_t i=0; i<nsatops; i++) {
+		auto &satpos = satpos_base[i];
+		const uint32_t nsai = satpos.sai.size();
+		bool first = true;
+		for (uint32_t elt=0; elt<nsai; elt++) {
+			if (satpos.sai[elt].tidx==tidx) {
+				if (first) {
+					// first offs for this tid, create the satpos_filtered element
+					nelt++;
+					nsmall++; // it is small at this point
+					satpos_filtered.expand();
+					satpos_filtered.back().init(satpos,elt,true,false);
+					first = false;
+				} else {
+					// just add to the existing one
+					const size_t org_size = satpos_filtered.back().addSai(satpos,elt)-1;
+					if (org_size==nsm) nsmall--; // was small but not small anymore
+				}
+			} else {
+				// we will need a new satpos_filtered element after this
+				// since the elements are not consecutive
+				first = true;
+			}
+		}
+	}
+	nelt_out   = nelt;
+	nsmall_out = nsmall;
 }
 
 /**
@@ -785,7 +831,6 @@ void SwDriver::populateAndPrioritizeSATups(
 	bool doExtend,               // do extension of seed hits?
 	bool lensq,                  // square length in weight calculation
 	bool szsq,                   // square range size in weight calculation
-	size_t nsm,                  // if range as <= nsm elts, it's "small"
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
@@ -795,12 +840,12 @@ void SwDriver::populateAndPrioritizeSATups(
 {
 	size_t nelt = 0, nsmall = 0;
 	//constexpr bool keepWhole = false;
-	EList<SATupleAndPos, 16>& satpos_base = getUnsortedSatPos();
+	EList<SATupleAndPos, 16>& satpos_base = satpos2_;
 	assert((&satpos_base) != (&satpos_));
 
 	populateSATups(
 		read, sh, ebwtFw, ebwtBw, 
-		seedmms, doExtend, nsm,
+		seedmms, doExtend,
 		ca, prm,
 		satpos_base, nelt, nsmall);
 	prioritizeSATups(
@@ -825,7 +870,6 @@ void SwDriver::populateAndPrioritizeSATupsWhole(
 	bool doExtend,               // do extension of seed hits?
 	bool lensq,                  // square length in weight calculation
 	bool szsq,                   // square range size in weight calculation
-	size_t nsm,                  // if range as <= nsm elts, it's "small"
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
@@ -843,7 +887,7 @@ void SwDriver::populateAndPrioritizeSATupsWhole(
 		EList<SATupleAndPos, 16>& satpos = satpos_;
 		populateSATups(
 			read, sh, ebwtFw, ebwtBw, 
-			seedmms, doExtend, nsm,
+			seedmms, doExtend,
 			ca, prm,
 			satpos, nelt, nsmall);
 		nrange = satpos.size();
@@ -942,7 +986,7 @@ int SwDriver::extendSeeds(
 
 	// Initialize a set of GroupWalks, one for each seed.  Also, intialize the
 	// accompanying lists of reference seed hits (satups*)
-	const size_t nsm = 5;
+	const size_t nsm = SMALL_N_THRESHOLD; // smallness threshold
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	size_t eeHits = sh.numE2eHits();
 	bool eeMode = eeHits > 0;
@@ -999,7 +1043,6 @@ int SwDriver::extendSeeds(
 					doExtend,      // extend out seeds
 					true,          // square extended length
 					true,          // square SA range size
-					nsm,           // smallness threshold
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -1438,7 +1481,6 @@ int SwDriver::extendSeeds(
 int SwDriver::extendPrioSeedsNoEE(
 	Read& rd,                    // read to align
 	bool mate1,                  // true iff rd is mate #1
-	const size_t nsm,            // smallness threshold
 	const size_t nelt,           // # elements total
 	const Ebwt& ebwtFw,          // BWT
 	const Ebwt* ebwtBw,          // BWT'
@@ -1470,6 +1512,7 @@ int SwDriver::extendPrioSeedsNoEE(
 	bool assume_advanced,        // were the elements already advanced? (need gws_ if false)
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
+	const size_t nsm = SMALL_N_THRESHOLD; // smallness threshold
 	assert(!reportImmediately || msink != NULL);
 
 	assert_geq(nceil, 0);
@@ -2037,7 +2080,7 @@ int SwDriver::extendSeedsPaired(
 
 	// Initialize a set of GroupWalks, one for each seed.  Also, intialize the
 	// accompanying lists of reference seed hits (satups*)
-	const size_t nsm = 5;
+	const size_t nsm = SMALL_N_THRESHOLD; // smallness threshold
 	const size_t nonz = sh.nonzeroOffsets(); // non-zero positions
 	size_t eeHits = sh.numE2eHits();
 	bool eeMode = eeHits > 0;
@@ -2101,7 +2144,6 @@ int SwDriver::extendSeedsPaired(
 					doExtend,      // extend out seeds
 					true,          // square extended length
 					true,          // square SA range size
-					nsm,           // smallness threshold
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -2960,7 +3002,6 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	Read& ord,                   // mate to align as opposite
 	bool anchor1,                // true iff anchor mate is mate1
 	bool oppFilt,                // true iff opposite mate was filtered out
-	const size_t nsm,            // smallness threshold
 	const size_t nelt,           // # elements total
 	const Ebwt& ebwtFw,          // BWT
 	const Ebwt* ebwtBw,          // BWT'
@@ -3004,6 +3045,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	bool assume_advanced,        // were the elements already advanced?
 	bool& exhaustive)
 {
+	const size_t nsm = SMALL_N_THRESHOLD; // smallness threshold
 	assert(!reportImmediately || msink != NULL);
 	assert(!msink->state().doneWithMate(anchor1));
 

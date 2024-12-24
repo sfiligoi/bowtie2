@@ -76,6 +76,7 @@
 #define ALIGNER_SW_DRIVER_H_
 
 #include <utility>
+#include <unordered_set>
 #include "ds.h"
 #include "aligner_seed.h"
 #include "aligner_sw.h"
@@ -192,11 +193,9 @@ struct SATupleAndPos {
 
 	// get one element out of another satpos
 	void init(const SATupleAndPos& other, size_t idx, bool copySai, bool copyEx = false) {
-		SATuple s;
 		TSlice o;
 		o.init(other.sat.offs, idx, idx+1);
-		s.init(other.sat.key, (TIndexOffU)(other.sat.topf + idx), OFF_MASK, o);
-		sat = s;
+		sat.init(other.sat.key, (TIndexOffU)(other.sat.topf + idx), OFF_MASK, o);
 		pos = other.pos;
 		origSz = other.origSz;
 		if (copyEx) {
@@ -212,6 +211,18 @@ struct SATupleAndPos {
 		} else {
 			sai.clear();
 		}
+	}
+
+	// Append sai[idx] from other to the end
+	// Assumes it is consecutive ompared to previous init and addSai
+	// Returns new size()
+	size_t addSai(const SATupleAndPos& other, size_t idx) {
+		const size_t org_size = sat.offs.size();
+		assert(org_size == sai.size());
+                sat.offs.setLength(org_size+1);
+		sai.expand();
+		sai.back() = other.sai[idx];
+		return org_size+1;
 	}
 };
 
@@ -404,7 +415,6 @@ public:
 	int extendPrioSeedsNoEE(
 		Read& rd,                    // read to align
 		bool mate1,                  // true iff rd is mate #1
-		const size_t nsm,            // smallness threshold
 		const size_t nelt,           // # elements total
 		const Ebwt& ebwtFw,          // BWT
 		const Ebwt* ebwtBw,          // BWT'
@@ -505,7 +515,6 @@ public:
 		Read& ord,                   // mate to align as opposite
 		bool anchor1,                // true iff anchor mate is mate1
 		bool oppFilt,                // true iff opposite mate was filtered out
-		const size_t nsm,            // smallness threshold
 		const size_t nelt,           // # elements total
 		const Ebwt& ebwtFw,          // BWT
 		const Ebwt* ebwtBw,          // BWT'
@@ -573,9 +582,6 @@ public:
 		redAnchor_.init(maxlen);
 	}
 
-	EList<SATupleAndPos, 16>& getUnsortedSatPos() {return satpos2_;}
-	EList<SATupleAndPos, 16>& getPrioSatPos() {return satpos_;}
-
 	/**
 	 * Given seed results, set up all of our state for resolving and keeping
 	 * track of reference offsets for hits.
@@ -587,7 +593,6 @@ public:
 		const Ebwt* ebwtBw,          // BWT
 		int seedmms,                 // # mismatches allowed in seed
 		bool doExtend,               // do extension of seed hits?
-		size_t nsm,                  // if range as <= nsm elts, it's "small"
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		PerReadMetrics& prm,         // per-read metrics
 		EList<SATupleAndPos, 16>& satpos, // out: elements
@@ -602,7 +607,18 @@ public:
 		const Ebwt& ebwtFw,          // BWT
 		const BitPairReference& ref, // Reference strings
 		WalkMetrics& wlm,            // group walk left metrics
-		PerReadMetrics& prm);        // per-read metrics
+		PerReadMetrics& prm,        // per-read metrics
+		std::unordered_set<TIndexOffU> &tidx_set);     // out: list of all the tidxs found
+
+	/**
+	 * Filter the SATupleAndPos based on tidx
+	 */
+	static void filterSATups(
+		EList<SATupleAndPos, 16>& satpos_base,     // in: unsorted elements
+		TIndexOffU                tidx,
+		EList<SATupleAndPos, 16>& satpos_filtered, // out: filtered elements
+		size_t& nelt_out,            // out: # elements total
+		size_t& nsmall_out);         // out: # small elements
 
 	/**
 	 * Given seed results, set up all of our state for resolving and keeping
@@ -635,7 +651,6 @@ public:
 		bool doExtend,               // do extension of seed hits?
 		bool lensq,                  // square length in weight calculation
 		bool szsq,                   // square range size in weight calculation
-		size_t nsm,                  // if range as <= nsm elts, it's "small"
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
@@ -684,7 +699,6 @@ protected:
 		bool doExtend,               // do extension of seed hits?
 		bool lensq,                  // square length in weight calculation
 		bool szsq,                   // square range size in weight calculation
-		size_t nsm,                  // if range as <= nsm elts, it's "small"
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
@@ -697,7 +711,7 @@ protected:
 	EList<Random1toN, 16>    rands2_;  // random number generators
 	EList<EEHit, 16>         eehits_;  // holds end-to-end hits
 	EList<SATupleAndPos, 16> satpos_;  // holds SATuple, SeedPos pairs
-	EList<SATupleAndPos, 16> satpos2_; // holds SATuple, SeedPos pairs
+	EList<SATupleAndPos, 16> satpos2_;  // holds SATuple, SeedPos pairs
 	EList<SATuple, 16>       satups_;  // holds SATuples to explore elements from
 	EList<GroupWalk2S<TSlice, 16> > gws_;   // list of GroupWalks; no particular order
 	EList<size_t>            mateStreaks_; // mate-find fail streaks
@@ -728,6 +742,8 @@ protected:
 	Pool           pool_;      // memory pages for salistExact_
 	TSAList        salistEe_;  // PList for offsets for end-to-end hits
 	GroupWalkState gwstate_;   // some per-thread state shared by all GroupWalks
+
+	static constexpr uint8_t SMALL_N_THRESHOLD = 5; // smallness threshold
 	
 	// For AlnRes::matchesRef:
 	ASSERT_ONLY(SStringExpandable<char>     raw_refbuf_);
