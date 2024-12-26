@@ -350,6 +350,37 @@ class SwDriver {
 	typedef PList<TIndexOffU, CACHE_PAGE_SZ> TSAList;
 
 public:
+	/**
+	 * Key limite-related metrics.  These are used for thresholds, allowing us to bail
+	 * for unproductive reads.
+	 */
+	struct LimitMetrics {
+
+	  LimitMetrics() { reset(); }
+
+	  void reset() {
+		nExIters =
+		nExDps   =
+		nMateDps =
+		nExUgs   =
+		nMateUgs = 0;
+	   }
+
+	   void merge(PerReadMetrics& prm) const {
+		prm.nExIters	+= nExIters;
+		prm.nExDps	+= nExDps;
+		prm.nMateDps 	+= nMateDps;
+		prm.nExUgs	+= nExUgs;
+		prm.nMateUgs	+= nMateUgs;
+	   }
+
+	   uint32_t nExIters;      // iterations of seed hit extend loop
+
+	   uint32_t nExDps;        // # extend DPs run on this read
+	   uint32_t nMateDps;      // # mate DPs run on this read
+	   uint32_t nExUgs;        // # extend ungapped alignments run on this read
+	   uint32_t nMateUgs;      // # mate ungapped alignments run on this read
+	};
 
 	SwDriver(size_t bytes) :
 		satups_(DP_CAT),
@@ -406,6 +437,7 @@ public:
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
 		PerReadMetrics& prm,         // per-read metrics
 		AlnSinkWrap* mhs,            // HitSink for multiseed-style aligner
+		LimitMetrics&   prl,         // limit rleated metrics
 		bool reportImmediately,      // whether to report hits immediately to mhs
 		bool& exhaustive);
 
@@ -442,6 +474,7 @@ public:
 		SwMetrics& swmSeed,          // DP metrics for seed-extend
 		PerReadMetrics& prm,         // per-read metrics
 		AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
+		LimitMetrics&   prl,         // limit rleated metrics
 		bool reportImmediately,      // whether to report hits immediately to mhs
 		bool assume_advanced,        // were the elements already advanced? (need gws_ if false)
 		bool& exhaustive);
@@ -501,6 +534,7 @@ public:
 		SwMetrics& swmMate,          // DP metrics for mate finidng
 		PerReadMetrics& prm,         // per-read metrics for anchor
 		AlnSinkWrap* msink,          // AlnSink wrapper for multiseed-style aligner
+		LimitMetrics&   prl,         // limit rleated metrics
 		bool swMateImmediately,      // whether to look for mate immediately
 		bool reportImmediately,      // whether to report hits immediately to msink
 		bool discord,                // look for discordant alignments?
@@ -551,6 +585,7 @@ public:
 		SwMetrics& swmMate,          // DP metrics for mate finidng
 		PerReadMetrics& prm,         // per-read metrics for anchor
 		AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
+		LimitMetrics&   prl,         // limit rleated metrics
 		bool swMateImmediately,      // whether to look for mate immediately
 		bool reportImmediately,      // whether to report hits immediately to msink
 		bool discord,                // look for discordant alignments?

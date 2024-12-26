@@ -966,6 +966,7 @@ int SwDriver::extendSeeds(
 	SwMetrics& swmSeed,          // DP metrics for seed-extend
 	PerReadMetrics& prm,         // per-read metrics
 	AlnSinkWrap* msink,          // AlnSink wrapper for multiseed-style aligner
+	LimitMetrics&   prl,         // limit rleated metrics
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
@@ -1088,16 +1089,16 @@ int SwDriver::extendSeeds(
 				} else if(eeMode && eehits_[i].score < minsc) {
 					break;
 				}
-				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
+				if(prl.nExDps >= maxDp || prl.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExUgs >= maxUg || prm.nMateUgs >= maxUg) {
+				if(prl.nExUgs >= maxUg || prl.nMateUgs >= maxUg) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExIters >= maxIters) {
+				if(prl.nExIters >= maxIters) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				prm.nExIters++;
+				prl.nExIters++;
 				first = false;
 				// Resolve next element offset
 				WalkResult wr;
@@ -1222,7 +1223,7 @@ int SwDriver::extendSeeds(
 						resUngap_);
 					Interval refival(refcoord, 1);
 					seenDiags1_.add(refival);
-					prm.nExUgs++;
+					prl.nExUgs++;
 					if(al == 0) {
 						prm.nExUgFails++;
 						prm.nUgFail++;
@@ -1240,7 +1241,7 @@ int SwDriver::extendSeeds(
 						swmSeed.ungapnodec++;
 					} else {
 						prm.nExUgSuccs++;
-						prm.nUgLastSucc = prm.nExUgs-1;
+						prm.nUgLastSucc = prl.nExUgs-1;
 						if(prm.nUgFail > prm.nUgFailStreak) {
 							prm.nUgFailStreak = prm.nUgFail;
 						}
@@ -1317,7 +1318,7 @@ int SwDriver::extendSeeds(
 					TAlScore bestCell = std::numeric_limits<TAlScore>::min();
 					found = swa.align(bestCell);
 					swmSeed.tallyGappedDp(readGaps, refGaps);
-					prm.nExDps++;
+					prl.nExDps++;
 					if(!found) {
 						prm.nExDpFails++;
 						prm.nDpFail++;
@@ -1330,7 +1331,7 @@ int SwDriver::extendSeeds(
 						continue; // Look for more anchor alignments
 					} else {
 						prm.nExDpSuccs++;
-						prm.nDpLastSucc = prm.nExDps-1;
+						prm.nDpLastSucc = prl.nExDps-1;
 						if(prm.nDpFail > prm.nDpFailStreak) {
 							prm.nDpFailStreak = prm.nDpFail;
 						}
@@ -1508,6 +1509,7 @@ int SwDriver::extendPrioSeedsNoEE(
 	SwMetrics& swmSeed,          // DP metrics for seed-extend
 	PerReadMetrics& prm,         // per-read metrics
 	AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
+	LimitMetrics&   prl,         // limit rleated metrics
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool assume_advanced,        // were the elements already advanced? (need gws_ if false)
 	bool& exhaustive)            // set to true iff we searched all seeds exhaustively
@@ -1562,16 +1564,16 @@ int SwDriver::extendPrioSeedsNoEE(
 			size_t riter = 0;
 			while(!rands_[i].done() && (first || is_small)) {
 				riter++;
-				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
+				if(prl.nExDps >= maxDp || prl.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExUgs >= maxUg || prm.nMateUgs >= maxUg) {
+				if(prl.nExUgs >= maxUg || prl.nMateUgs >= maxUg) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExIters >= maxIters) {
+				if(prl.nExIters >= maxIters) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				prm.nExIters++;
+				prl.nExIters++;
 				first = false;
 				// Resolve next element offset
 				size_t elt = rands_[i].next(rnd);
@@ -1675,7 +1677,7 @@ int SwDriver::extendPrioSeedsNoEE(
 						resUngap_);
 					Interval refival(refcoord, 1);
 					seenDiags1_.add(refival);
-					prm.nExUgs++;
+					prl.nExUgs++;
 					if(al == 0) {
 						prm.nExUgFails++;
 						prm.nUgFail++;
@@ -1693,7 +1695,7 @@ int SwDriver::extendPrioSeedsNoEE(
 						swmSeed.ungapnodec++;
 					} else {
 						prm.nExUgSuccs++;
-						prm.nUgLastSucc = prm.nExUgs-1;
+						prm.nUgLastSucc = prl.nExUgs-1;
 						if(prm.nUgFail > prm.nUgFailStreak) {
 							prm.nUgFailStreak = prm.nUgFail;
 						}
@@ -1770,7 +1772,7 @@ int SwDriver::extendPrioSeedsNoEE(
 					TAlScore bestCell = std::numeric_limits<TAlScore>::min();
 					found = swa.align(bestCell);
 					swmSeed.tallyGappedDp(readGaps, refGaps);
-					prm.nExDps++;
+					prl.nExDps++;
 					if(!found) {
 						prm.nExDpFails++;
 						prm.nDpFail++;
@@ -1783,7 +1785,7 @@ int SwDriver::extendPrioSeedsNoEE(
 						continue; // Look for more anchor alignments
 					} else {
 						prm.nExDpSuccs++;
-						prm.nDpLastSucc = prm.nExDps-1;
+						prm.nDpLastSucc = prl.nExDps-1;
 						if(prm.nDpFail > prm.nDpFailStreak) {
 							prm.nDpFailStreak = prm.nDpFail;
 						}
@@ -2020,6 +2022,7 @@ int SwDriver::extendSeedsPaired(
 	SwMetrics& swmMate,          // DP metrics for mate finidng
 	PerReadMetrics& prm,         // per-read metrics
 	AlnSinkWrap* msink,          // AlnSink wrapper for multiseed-style aligner
+	LimitMetrics&   prl,         // limit rleated metrics
 	bool swMateImmediately,      // whether to look for mate immediately
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool discord,                // look for discordant alignments?
@@ -2188,13 +2191,13 @@ int SwDriver::extendSeedsPaired(
 				} else if(eeMode && eehits_[i].score < minsc) {
 					break;
 				}
-				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
+				if(prl.nExDps >= maxDp || prl.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExUgs >= maxUg || prm.nMateUgs >= maxUg) {
+				if(prl.nExUgs >= maxUg || prl.nMateUgs >= maxUg) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExIters >= maxIters) {
+				if(prl.nExIters >= maxIters) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
 				if(eeMode && prm.nEeFail >= maxEeStreak) {
@@ -2212,7 +2215,7 @@ int SwDriver::extendSeedsPaired(
 					assert(rands_[i].done());
 					break;
 				}
-				prm.nExIters++;
+				prl.nExIters++;
 				first = false;
 				assert(!gws_[i].done());
 				// Resolve next element offset
@@ -2345,7 +2348,7 @@ int SwDriver::extendSeedsPaired(
 						resUngap_);
 					Interval refival(refcoord, 1);
 					seenDiags.add(refival);
-					prm.nExUgs++;
+					prl.nExUgs++;
 					prm.nUgFail++; // say it's failed until proven successful
 					prm.nExUgFails++;
 					if(al == 0) {
@@ -2426,7 +2429,7 @@ int SwDriver::extendSeedsPaired(
 					TAlScore bestCell = std::numeric_limits<TAlScore>::min();
 					found = swa.align(bestCell);
 					swmSeed.tallyGappedDp(readGaps, refGaps);
-					prm.nExDps++;
+					prl.nExDps++;
 					prm.nDpFail++;    // failed until proven successful
 					prm.nExDpFails++; // failed until proven successful
 					if(!found) {
@@ -2670,7 +2673,7 @@ int SwDriver::extendSeedsPaired(
 							// iff there is at least one valid alignment
 							TAlScore bestCell = std::numeric_limits<TAlScore>::min();
 							foundMate = oswa.align(bestCell);
-							prm.nMateDps++;
+							prl.nMateDps++;
 							swmMate.tallyGappedDp(oreadGaps, orefGaps);
 							if(!foundMate) {
 								TAlScore bestLast = anchor1 ? prm.bestLtMinscMate2 : prm.bestLtMinscMate1;
@@ -2956,7 +2959,7 @@ int SwDriver::extendSeedsPaired(
 						assert_gt(prm.nExUgFails, 0);
 						prm.nExUgFails--;
 						prm.nExUgSuccs++;
-						prm.nUgLastSucc = prm.nExUgs-1;
+						prm.nUgLastSucc = prl.nExUgs-1;
 						if(prm.nUgFail > prm.nUgFailStreak) {
 							prm.nUgFailStreak = prm.nUgFail;
 						}
@@ -2976,7 +2979,7 @@ int SwDriver::extendSeedsPaired(
 						assert_gt(prm.nExDpFails, 0);
 						prm.nExDpFails--;
 						prm.nExDpSuccs++;
-						prm.nDpLastSucc = prm.nExDps-1;
+						prm.nDpLastSucc = prl.nExDps-1;
 						if(prm.nDpFail > prm.nDpFailStreak) {
 							prm.nDpFailStreak = prm.nDpFail;
 						}
@@ -3038,6 +3041,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 	SwMetrics& swmMate,          // DP metrics for mate finidng
 	PerReadMetrics& prm,         // per-read metrics
 	AlnSinkStateWrap* msink,     // AlnSink state wrapper for multiseed-style aligner
+	LimitMetrics&   prl,         // limit rleated metrics
 	bool swMateImmediately,      // whether to look for mate immediately
 	bool reportImmediately,      // whether to report hits immediately to msink
 	bool discord,                // look for discordant alignments?
@@ -3106,13 +3110,13 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 			// range is large, just investigate one and move on - we might come
 			// back to this range later.
 			while(!rands_[i].done() && (first || is_small )) {
-				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
+				if(prl.nExDps >= maxDp || prl.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExUgs >= maxUg || prm.nMateUgs >= maxUg) {
+				if(prl.nExUgs >= maxUg || prl.nMateUgs >= maxUg) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
-				if(prm.nExIters >= maxIters) {
+				if(prl.nExIters >= maxIters) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
 				if(prm.nDpFail >= maxDpStreak) {
@@ -3127,7 +3131,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 					assert(rands_[i].done());
 					break;
 				}
-				prm.nExIters++;
+				prl.nExIters++;
 				first = false;
 				// Resolve next element offset
 				size_t elt = rands_[i].next(rnd);
@@ -3237,7 +3241,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 						resUngap_);
 					Interval refival(refcoord, 1);
 					seenDiags.add(refival);
-					prm.nExUgs++;
+					prl.nExUgs++;
 					prm.nUgFail++; // say it's failed until proven successful
 					prm.nExUgFails++;
 					if(al == 0) {
@@ -3318,7 +3322,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 					TAlScore bestCell = std::numeric_limits<TAlScore>::min();
 					found = swa.align(bestCell);
 					swmSeed.tallyGappedDp(readGaps, refGaps);
-					prm.nExDps++;
+					prl.nExDps++;
 					prm.nDpFail++;    // failed until proven successful
 					prm.nExDpFails++; // failed until proven successful
 					if(!found) {
@@ -3529,7 +3533,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 							// iff there is at least one valid alignment
 							TAlScore bestCell = std::numeric_limits<TAlScore>::min();
 							foundMate = oswa.align(bestCell);
-							prm.nMateDps++;
+							prl.nMateDps++;
 							swmMate.tallyGappedDp(oreadGaps, orefGaps);
 							if(!foundMate) {
 								TAlScore bestLast = anchor1 ? prm.bestLtMinscMate2 : prm.bestLtMinscMate1;
@@ -3779,7 +3783,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 						assert_gt(prm.nExUgFails, 0);
 						prm.nExUgFails--;
 						prm.nExUgSuccs++;
-						prm.nUgLastSucc = prm.nExUgs-1;
+						prm.nUgLastSucc = prl.nExUgs-1;
 						if(prm.nUgFail > prm.nUgFailStreak) {
 							prm.nUgFailStreak = prm.nUgFail;
 						}
@@ -3789,7 +3793,7 @@ int SwDriver::extendPrioSeedsPairedNoEE(
 						assert_gt(prm.nExDpFails, 0);
 						prm.nExDpFails--;
 						prm.nExDpSuccs++;
-						prm.nDpLastSucc = prm.nExDps-1;
+						prm.nDpLastSucc = prl.nExDps-1;
 						if(prm.nDpFail > prm.nDpFailStreak) {
 							prm.nDpFailStreak = prm.nDpFail;
 						}

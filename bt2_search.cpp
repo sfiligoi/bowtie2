@@ -3150,6 +3150,7 @@ static void multiseedSearchWorker(void *vp) {
 		EList<Seed> *seeds[2] = { &seeds1, &seeds2 };
 
 		PerReadMetrics prm;
+		SwDriver::LimitMetrics prl;
 
 		// Used by thread with threadid == 1 to measure time elapsed
 		time_t iTime = time(0);
@@ -3331,6 +3332,7 @@ static void multiseedSearchWorker(void *vp) {
 					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
 					prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
+					prl.reset();
 					Read* rds[2] = { &ps->read_a(), &ps->read_b() };
 					// For each mate...
 					assert(msinkwrap.empty());
@@ -3523,6 +3525,7 @@ static void multiseedSearchWorker(void *vp) {
 									swmMate,        // DP metrics, mate finding
 									prm,            // per-read metrics
 									&msinkwrap,     // for organizing hits
+									prl,            // limit rleated metrics
 									true,           // seek mate immediately
 									true,           // report hits once found
 									gReportDiscordant,// look for discordant alns?
@@ -3564,6 +3567,7 @@ static void multiseedSearchWorker(void *vp) {
 									swmSeed,        // DP metrics, seed extend
 									prm,            // per-read metrics
 									&msinkwrap,     // for organizing hits
+									prl,            // limit rleated metrics
 									true,           // report hits once found
 									exhaustive[mate]);
 							}
@@ -3705,6 +3709,7 @@ static void multiseedSearchWorker(void *vp) {
 									swmMate,        // DP metrics, mate finding
 									prm,            // per-read metrics
 									&msinkwrap,     // for organizing hits
+									prl,            // limit rleated metrics
 									true,           // seek mate immediately
 									true,           // report hits once found
 									gReportDiscordant,// look for discordant alns?
@@ -3746,6 +3751,7 @@ static void multiseedSearchWorker(void *vp) {
 									swmSeed,        // DP metrics, seed extend
 									prm,            // per-read metrics
 									&msinkwrap,     // for organizing hits
+									prl,            // limit rleated metrics
 									true,           // report hits once found
 									exhaustive[mate]);
 							}
@@ -3981,6 +3987,7 @@ static void multiseedSearchWorker(void *vp) {
 										swmMate,        // DP metrics, mate finding
 										prm,            // per-read metrics
 										&msinkwrap,     // for organizing hits
+										prl,            // limit rleated metrics
 										true,           // seek mate immediately
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
@@ -4022,6 +4029,7 @@ static void multiseedSearchWorker(void *vp) {
 										swmSeed,        // DP metrics, seed extend
 										prm,            // per-read metrics
 										&msinkwrap,     // for organizing hits
+										prl,            // limit rleated metrics
 										true,           // report hits once found
 										exhaustive[mate]);
 								}
@@ -4097,6 +4105,7 @@ static void multiseedSearchWorker(void *vp) {
 					for(int i = 0; i < 4; i++) {
 						prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 					}
+					prl.merge(prm);
 					for(size_t i = 0; i < 2; i++) {
 						assert_leq(prm.nExIters, mxIter[i]);
 						assert_leq(prm.nExDps,   mxDp[i]);
@@ -4366,6 +4375,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 		std::unordered_set<TIndexOffU> tidx_set;
 		if (!independentGenome) tidx_set.insert(0); // we use a single arbitrary element in standard mode
 
+		std::unordered_map<TIndexOffU,SwDriver::LimitMetrics> prl_map;
+
 		// internal temps for filtering SATuple, SeedPos pairs
 		EList<SATupleAndPos, 16> satpos_base;
 		EList<SATupleAndPos, 16> satpos_filtered;
@@ -4550,6 +4561,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 					filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
 					prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
+					prl_map.clear();
 					Read* rds[2] = { &ps->read_a(), &ps->read_b() };
 					// For each mate...
 					assert(msinkwrap.empty());
@@ -4853,7 +4865,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										!independentGenome); // Do I need gwms?
 								}
 
-
+								SwDriver::LimitMetrics &prl = prl_map[tidx];
 								int ret = 0;
 								if (shs[mate].nonzeroOffsets()==0) {
 									// No seed hits!  Bail.
@@ -4901,6 +4913,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										swmMate,        // DP metrics, mate finding
 										prm,            // per-read metrics
 										&sinkstate,     // for organizing hits
+										prl,            // limit rleated metrics
 										true,           // seek mate immediately
 										true,           // report hits once found
 										gReportDiscordant,// look for discordant alns?
@@ -4940,6 +4953,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										swmSeed,        // DP metrics, seed extend
 										prm,            // per-read metrics
 										&sinkstate,     // for organizing hits
+										prl,            // limit rleated metrics
 										true,           // report hits once found
 										independentGenome, // assume_advanced, use gws_ if false
 										exhaustive[mate]);
@@ -5025,6 +5039,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					for(int i = 0; i < 4; i++) {
 						prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 					}
+					for (auto& prl_itr : prl_map) prl_itr.second.merge(prm);
 					for(size_t i = 0; i < 2; i++) {
 						assert_leq(prm.nExIters, mxIter[i]);
 						assert_leq(prm.nExDps,   mxDp[i]);
