@@ -4722,6 +4722,10 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										ca,             // seed alignment cache
 										prm,            // per-read metrics
 										satpos_base, nelt, nsmall);  // out, to be passed to prioritizeSATups
+								if (nelt>1000) {
+									done[mate] = true;
+									continue;
+								}
 								sd.prioritizeSATups(
 										satpos_base, nelt, nsmall,   // in from populateSATups
 										ebwtFw,         // bowtie index
