@@ -188,7 +188,6 @@ bool SwDriver::eeSaTups(
                         ebwt,               // forward Bowtie index
                         ref,                // reference sequences
                         sa,                 // SATuple
-                        rnd,                // pseudo-random generator
                         wlm);               // metrics
                     assert(gws_.back().repOk(sa));
                     nelt_out += width;
@@ -277,7 +276,6 @@ bool SwDriver::eeSaTups(
                     ebwt, // forward Bowtie index
                     ref,  // reference sequences
                     sa,   // SATuple
-                    rnd,  // pseudo-random generator
                     wlm); // metrics
                 assert(gws_.back().repOk(sa));
                 nelt_out += width;
@@ -620,7 +618,6 @@ void SwDriver::prioritizeSATups(
 				ebwtFw, // forward Bowtie index
 				ref,    // reference sequences
 				sa,     // SA tuples: ref hit, salist range
-				rnd,    // pseudo-random generator
 				wlm);   // metrics
 			assert(gws_.back().initialized());
 			rands_.expand();
@@ -665,7 +662,6 @@ void SwDriver::prioritizeSATups(
 			ebwtFw, // forward Bowtie index
 			ref,    // reference sequences
 			sa,     // SA tuples: ref hit, salist range
-			rnd,    // pseudo-random generator
 			wlm);   // metrics
 		assert(gws_.back().initialized());
 		rands_.expand();
@@ -725,7 +721,6 @@ void SwDriver::prioritizeSATups(
 			ebwtFw, // forward Bowtie index
 			ref,    // reference sequences
 			sa,     // SA tuples: ref hit, salist range
-			rnd,    // pseudo-random generator
 			wlm);   // metrics
 		assert(gws_.back().initialized());
 		// Initialize random selector
