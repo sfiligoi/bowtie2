@@ -3169,6 +3169,13 @@ static void multiseedSearchWorker(void *vp) {
 		// Keep track of whether mates 1/2 were filtered out by upstream qc
 		bool qcfilt[2]  = { true, true };
 
+		// Calculate streak length
+		const size_t streak_base  = calcMax(maxDpStreak, maxStreakIncr);
+		const size_t mtStreak  = calcMax(maxMateStreak,  maxStreakIncr);
+		const size_t mxDp      = calcMax(maxDp,    maxItersIncr);
+		const size_t mxUg      = calcMax(maxUg,    maxItersIncr);
+		const size_t mxIter    = calcMax(maxIters, maxItersIncr);
+
 		rndArb.init((uint32_t)time(0));
 		int mergei = 0;
 		int mergeival = 16;
@@ -3370,19 +3377,13 @@ static void multiseedSearchWorker(void *vp) {
 						}
 						interval[mate] = max(interval[mate], 1);
 					}
-					// Calculate streak length
-					size_t       streak[2]    = { calcMax(maxDpStreak,   maxStreakIncr), calcMax(maxDpStreak,   maxStreakIncr) };
-					const size_t mtStreak[2]  = { calcMax(maxMateStreak, maxStreakIncr), calcMax(maxMateStreak, maxStreakIncr) };
-					const size_t mxDp[2]      = { calcMax(maxDp,    maxItersIncr), calcMax(maxDp,    maxItersIncr) };
-					const size_t mxUg[2]      = { calcMax(maxUg,    maxItersIncr), calcMax(maxUg,    maxItersIncr) };
-					const size_t mxIter[2]    = { calcMax(maxIters, maxItersIncr), calcMax(maxIters, maxItersIncr) };
+					size_t streak    = streak_base;
 					if(filt[0] && filt[1]) {
-						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
-						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
-						assert_gt(streak[1], 0);
+						streak = (size_t)ceil((double)streak / 2.0);
+						assert_gt(streak, 0);
 					}
-					prm.maxDPFails = streak[0];
-					assert_gt(streak[0], 0);
+					prm.maxDPFails = streak;
+					assert_gt(streak, 0);
 					// Calculate # seed rounds for each mate
 					size_t nrounds[2] = { nSeedRounds, nSeedRounds };
 					if(filt[0] && filt[1]) {
@@ -3488,13 +3489,13 @@ static void multiseedSearchWorker(void *vp) {
 									norc[mate],     // don't align revcomp read
 									maxhalf,        // max width on one DP side
 									doUngapped,     // do ungapped alignment
-									mxIter[mate],   // max extend loop iters
-									mxUg[mate],     // max # ungapped extends
-									mxDp[mate],     // max # DPs
-									streak[mate],   // stop after streak of this many end-to-end fails
-									streak[mate],   // stop after streak of this many ungap fails
-									streak[mate],   // stop after streak of this many dp fails
-									mtStreak[mate], // max mate fails per seed range
+									mxIter,         // max extend loop iters
+									mxUg,           // max # ungapped extends
+									mxDp,           // max # DPs
+									streak,         // stop after streak of this many end-to-end fails
+									streak,         // stop after streak of this many ungap fails
+									streak,         // stop after streak of this many dp fails
+									mtStreak,       // max mate fails per seed range
 									doExtend,       // extend seed hits
 									enable8,        // use 8-bit SSE where possible
 									cminlen,        // checkpoint if read is longer
@@ -3532,11 +3533,11 @@ static void multiseedSearchWorker(void *vp) {
 									nceil[mate],    // N ceil for anchor
 									maxhalf,        // max width on one DP side
 									doUngapped,     // do ungapped alignment
-									mxIter[mate],   // max extend loop iters
-									mxUg[mate],     // max # ungapped extends
-									mxDp[mate],     // max # DPs
-									streak[mate],   // stop after streak of this many end-to-end fails
-									streak[mate],   // stop after streak of this many ungap fails
+									mxIter,         // max extend loop iters
+									mxUg,           // max # ungapped extends
+									mxDp,           // max # DPs
+									streak,         // stop after streak of this many end-to-end fails
+									streak,         // stop after streak of this many ungap fails
 									doExtend,       // extend seed hits
 									enable8,        // use 8-bit SSE where possible
 									cminlen,        // checkpoint if read is longer
@@ -3670,13 +3671,13 @@ static void multiseedSearchWorker(void *vp) {
 									norc[mate],     // don't align revcomp read
 									maxhalf,        // max width on one DP side
 									doUngapped,     // do ungapped alignment
-									mxIter[mate],   // max extend loop iters
-									mxUg[mate],     // max # ungapped extends
-									mxDp[mate],     // max # DPs
-									streak[mate],   // stop after streak of this many end-to-end fails
-									streak[mate],   // stop after streak of this many ungap fails
-									streak[mate],   // stop after streak of this many dp fails
-									mtStreak[mate], // max mate fails per seed range
+									mxIter,         // max extend loop iters
+									mxUg,           // max # ungapped extends
+									mxDp,           // max # DPs
+									streak,         // stop after streak of this many end-to-end fails
+									streak,         // stop after streak of this many ungap fails
+									streak,         // stop after streak of this many dp fails
+									mtStreak,       // max mate fails per seed range
 									doExtend,       // extend seed hits
 									enable8,        // use 8-bit SSE where possible
 									cminlen,        // checkpoint if read is longer
@@ -3714,11 +3715,11 @@ static void multiseedSearchWorker(void *vp) {
 									nceil[mate],    // N ceil for anchor
 									maxhalf,        // max width on one DP side
 									doUngapped,     // do ungapped alignment
-									mxIter[mate],   // max extend loop iters
-									mxUg[mate],     // max # ungapped extends
-									mxDp[mate],     // max # DPs
-									streak[mate],   // stop after streak of this many end-to-end fails
-									streak[mate],   // stop after streak of this many ungap fails
+									mxIter,         // max extend loop iters
+									mxUg,           // max # ungapped extends
+									mxDp,           // max # DPs
+									streak,         // stop after streak of this many end-to-end fails
+									streak,         // stop after streak of this many ungap fails
 									doExtend,       // extend seed hits
 									enable8,        // use 8-bit SSE where possible
 									cminlen,        // checkpoint if read is longer
@@ -3946,13 +3947,13 @@ static void multiseedSearchWorker(void *vp) {
 										norc[mate],     // don't align revcomp read
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
-										streak[mate],   // stop after streak of this many dp fails
-										mtStreak[mate], // max mate fails per seed range
+										mxIter,         // max extend loop iters
+										mxUg,           // max # ungapped extends
+										mxDp,           // max # DPs
+										streak,         // stop after streak of this many end-to-end fails
+										streak,         // stop after streak of this many ungap fails
+										streak,         // stop after streak of this many dp fails
+										mtStreak,       // max mate fails per seed range
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -3990,11 +3991,11 @@ static void multiseedSearchWorker(void *vp) {
 										nceil[mate],    // N ceil for anchor
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
+										mxIter,         // max extend loop iters
+										mxUg,           // max # ungapped extends
+										mxDp,           // max # DPs
+										streak,         // stop after streak of this many end-to-end fails
+										streak,         // stop after streak of this many ungap fails
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -4082,15 +4083,15 @@ static void multiseedSearchWorker(void *vp) {
 					for(int i = 0; i < 4; i++) {
 						prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 					}
-					for(size_t i = 0; i < 2; i++) {
-						assert_leq(prm.nExIters, mxIter[i]);
-						assert_leq(prm.nExDps,   mxDp[i]);
-						assert_leq(prm.nMateDps, mxDp[i]);
-						assert_leq(prm.nExUgs,   mxUg[i]);
-						assert_leq(prm.nMateUgs, mxUg[i]);
-						assert_leq(prm.nDpFail,  streak[i]);
-						assert_leq(prm.nUgFail,  streak[i]);
-						assert_leq(prm.nEeFail,  streak[i]);
+					{
+						assert_leq(prm.nExIters, mxIter);
+						assert_leq(prm.nExDps,   mxDp);
+						assert_leq(prm.nMateDps, mxDp);
+						assert_leq(prm.nExUgs,   mxUg);
+						assert_leq(prm.nMateUgs, mxUg);
+						assert_leq(prm.nDpFail,  streak);
+						assert_leq(prm.nUgFail,  streak);
+						assert_leq(prm.nEeFail,  streak);
 					}
 
 				// Commit and report paired-end/unpaired alignments
@@ -4308,6 +4309,13 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 		// Keep track of whether mates 1/2 were filtered out by upstream qc
 		bool qcfilt[2]  = { true, true };
 
+		// Calculate streak length
+		const size_t streak_base  = calcMax(maxDpStreak, maxStreakIncr);
+		const size_t mtStreak  = calcMax(maxMateStreak,  maxStreakIncr);
+		const size_t mxDp      = calcMax(maxDp,    maxItersIncr);
+		const size_t mxUg      = calcMax(maxUg,    maxItersIncr);
+		const size_t mxIter    = calcMax(maxIters, maxItersIncr);
+
 		rndArb.init((uint32_t)time(0));
 		int mergei = 0;
 		int mergeival = 16;
@@ -4507,19 +4515,13 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 						}
 						interval[mate] = max(interval[mate], 1);
 					}
-					// Calculate streak length
-					size_t       streak[2]    = { calcMax(maxDpStreak,   maxStreakIncr), calcMax(maxDpStreak,   maxStreakIncr) };
-					const size_t mtStreak[2]  = { calcMax(maxMateStreak, maxStreakIncr), calcMax(maxMateStreak, maxStreakIncr) };
-					const size_t mxDp[2]      = { calcMax(maxDp,    maxItersIncr), calcMax(maxDp,    maxItersIncr) };
-					const size_t mxUg[2]      = { calcMax(maxUg,    maxItersIncr), calcMax(maxUg,    maxItersIncr) };
-					const size_t mxIter[2]    = { calcMax(maxIters, maxItersIncr), calcMax(maxIters, maxItersIncr) };
+					size_t streak    = streak_base;
 					if(filt[0] && filt[1]) {
-						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
-						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
-						assert_gt(streak[1], 0);
+						streak = (size_t)ceil((double)streak / 2.0);
+						assert_gt(streak, 0);
 					}
-					prm.maxDPFails = streak[0];
-					assert_gt(streak[0], 0);
+					prm.maxDPFails = streak;
+					assert_gt(streak, 0);
 					// Calculate # seed rounds for each mate
 					size_t nrounds[2] = { nSeedRounds, nSeedRounds };
 					if(filt[0] && filt[1]) {
@@ -4720,13 +4722,13 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										norc[mate],     // don't align revcomp read
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
-										streak[mate],   // stop after streak of this many dp fails
-										mtStreak[mate], // max mate fails per seed range
+										mxIter,         // max extend loop iters
+										mxUg,           // max # ungapped extends
+										mxDp,           // max # DPs
+										streak,         // stop after streak of this many end-to-end fails
+										streak,         // stop after streak of this many ungap fails
+										streak,         // stop after streak of this many dp fails
+										mtStreak,       // max mate fails per seed range
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -4763,11 +4765,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										nceil[mate],    // N ceil for anchor
 										maxhalf,        // max width on one DP side
 										doUngapped,     // do ungapped alignment
-										mxIter[mate],   // max extend loop iters
-										mxUg[mate],     // max # ungapped extends
-										mxDp[mate],     // max # DPs
-										streak[mate],   // stop after streak of this many end-to-end fails
-										streak[mate],   // stop after streak of this many ungap fails
+										mxIter,         // max extend loop iters
+										mxUg,           // max # ungapped extends
+										mxDp,           // max # DPs
+										streak,         // stop after streak of this many end-to-end fails
+										streak,         // stop after streak of this many ungap fails
 										doExtend,       // extend seed hits
 										enable8,        // use 8-bit SSE where possible
 										cminlen,        // checkpoint if read is longer
@@ -4854,15 +4856,15 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 					for(int i = 0; i < 4; i++) {
 						prm.seedsPerNucMS[i] = totnucs > 0 ? ((float)seedsTriedMS[i] / totnucs) : -1;
 					}
-					for(size_t i = 0; i < 2; i++) {
-						assert_leq(prm.nExIters, mxIter[i]);
-						assert_leq(prm.nExDps,   mxDp[i]);
-						assert_leq(prm.nMateDps, mxDp[i]);
-						assert_leq(prm.nExUgs,   mxUg[i]);
-						assert_leq(prm.nMateUgs, mxUg[i]);
-						assert_leq(prm.nDpFail,  streak[i]);
-						assert_leq(prm.nUgFail,  streak[i]);
-						assert_leq(prm.nEeFail,  streak[i]);
+					{
+						assert_leq(prm.nExIters, mxIter);
+						assert_leq(prm.nExDps,   mxDp);
+						assert_leq(prm.nMateDps, mxDp);
+						assert_leq(prm.nExUgs,   mxUg);
+						assert_leq(prm.nMateUgs, mxUg);
+						assert_leq(prm.nDpFail,  streak);
+						assert_leq(prm.nUgFail,  streak);
+						assert_leq(prm.nEeFail,  streak);
 					}
 
 				// Commit and report paired-end/unpaired alignments
@@ -5172,20 +5174,20 @@ static void multiseedSearchWorker_2p5(void *vp) {
 				rnd.init(ROTL((rds[0]->seed ^ rds[1]->seed), 10));
 			}
 			// Calculate streak length
-			size_t       streak[2]    = { calcMax(maxDpStreak,   maxStreakIncr), calcMax(maxDpStreak,   maxStreakIncr) };
-			//const size_t mtStreak[2]  = { calcMax(maxMateStreak, maxStreakIncr), calcMax(maxMateStreak, maxStreakIncr) };
-			//const size_t mxDp[2]      = { calcMax(maxDp,    maxItersIncr), calcMax(maxDp,    maxItersIncr) };
-			//const size_t mxUg[2]      = { calcMax(maxUg,    maxItersIncr), calcMax(maxUg,    maxItersIncr) };
-			//const size_t mxIter[2]    = { calcMax(maxIters, maxItersIncr), calcMax(maxIters, maxItersIncr) };
+			const size_t streak_base  = calcMax(maxDpStreak, maxStreakIncr);
+			//const size_t mtStreak  = calcMax(maxMateStreak,  maxStreakIncr);
+			//const size_t mxDp      = calcMax(maxDp,    maxItersIncr);
+			//const size_t mxUg      = calcMax(maxUg,    maxItersIncr);
+			//const size_t mxIter    = calcMax(maxIters, maxItersIncr);
 			// If paired-end and neither mate filtered...
+			size_t streak = streak_base;
 			if(filt[0] && filt[1]) {
 				// Reduce streaks for either mate
-				streak[0] = (size_t)ceil((double)streak[0] / 2.0);
-				streak[1] = (size_t)ceil((double)streak[1] / 2.0);
-				assert_gt(streak[1], 0);
+				streak = (size_t)ceil((double)streak / 2.0);
+				assert_gt(streak, 0);
 			}
-			assert_gt(streak[0], 0);
-			prm.maxDPFails = streak[0];
+			assert_gt(streak, 0);
+			prm.maxDPFails = streak;
 			// Increment counters according to what got filtered
 			for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 				if(!filt[mate]) {
