@@ -2993,6 +2993,19 @@ public:
 };
 
 /**
+ * Compute max based on the values of allHits and khits
+ * **/
+inline size_t calcMax(size_t defMax, size_t incr) {
+	size_t max = defMax;
+	if(allHits) {
+		max  = std::numeric_limits<size_t>::max();
+	} else if(khits > 1) {
+		max += (khits-1) * incr;
+	}
+	return max;
+}
+
+/**
  * Called once per thread.  Sets up per-thread pointers to the shared global
  * data structures, creates per-thread structures, then enters the alignment
  * loop.  The general flow of the alignment loop is:
@@ -3358,26 +3371,11 @@ static void multiseedSearchWorker(void *vp) {
 						interval[mate] = max(interval[mate], 1);
 					}
 					// Calculate streak length
-					size_t streak[2]    = { maxDpStreak,   maxDpStreak };
-					size_t mtStreak[2]  = { maxMateStreak, maxMateStreak };
-					size_t mxDp[2]      = { maxDp,         maxDp       };
-					size_t mxUg[2]      = { maxUg,         maxUg       };
-					size_t mxIter[2]    = { maxIters,      maxIters    };
-					if(allHits) {
-						streak[0]   = streak[1]   = std::numeric_limits<size_t>::max();
-						mtStreak[0] = mtStreak[1] = std::numeric_limits<size_t>::max();
-						mxDp[0]     = mxDp[1]     = std::numeric_limits<size_t>::max();
-						mxUg[0]     = mxUg[1]     = std::numeric_limits<size_t>::max();
-						mxIter[0]   = mxIter[1]   = std::numeric_limits<size_t>::max();
-					} else if(khits > 1) {
-						for(size_t mate = 0; mate < 2; mate++) {
-							streak[mate]   += (khits-1) * maxStreakIncr;
-							mtStreak[mate] += (khits-1) * maxStreakIncr;
-							mxDp[mate]     += (khits-1) * maxItersIncr;
-							mxUg[mate]     += (khits-1) * maxItersIncr;
-							mxIter[mate]   += (khits-1) * maxItersIncr;
-						}
-					}
+					size_t       streak[2]    = { calcMax(maxDpStreak,   maxStreakIncr), calcMax(maxDpStreak,   maxStreakIncr) };
+					const size_t mtStreak[2]  = { calcMax(maxMateStreak, maxStreakIncr), calcMax(maxMateStreak, maxStreakIncr) };
+					const size_t mxDp[2]      = { calcMax(maxDp,    maxItersIncr), calcMax(maxDp,    maxItersIncr) };
+					const size_t mxUg[2]      = { calcMax(maxUg,    maxItersIncr), calcMax(maxUg,    maxItersIncr) };
+					const size_t mxIter[2]    = { calcMax(maxIters, maxItersIncr), calcMax(maxIters, maxItersIncr) };
 					if(filt[0] && filt[1]) {
 						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
 						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
@@ -4510,26 +4508,11 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 						interval[mate] = max(interval[mate], 1);
 					}
 					// Calculate streak length
-					size_t streak[2]    = { maxDpStreak,   maxDpStreak };
-					size_t mtStreak[2]  = { maxMateStreak, maxMateStreak };
-					size_t mxDp[2]      = { maxDp,         maxDp       };
-					size_t mxUg[2]      = { maxUg,         maxUg       };
-					size_t mxIter[2]    = { maxIters,      maxIters    };
-					if(allHits) {
-						streak[0]   = streak[1]   = std::numeric_limits<size_t>::max();
-						mtStreak[0] = mtStreak[1] = std::numeric_limits<size_t>::max();
-						mxDp[0]     = mxDp[1]     = std::numeric_limits<size_t>::max();
-						mxUg[0]     = mxUg[1]     = std::numeric_limits<size_t>::max();
-						mxIter[0]   = mxIter[1]   = std::numeric_limits<size_t>::max();
-					} else if(khits > 1) {
-						for(size_t mate = 0; mate < 2; mate++) {
-							streak[mate]   += (khits-1) * maxStreakIncr;
-							mtStreak[mate] += (khits-1) * maxStreakIncr;
-							mxDp[mate]     += (khits-1) * maxItersIncr;
-							mxUg[mate]     += (khits-1) * maxItersIncr;
-							mxIter[mate]   += (khits-1) * maxItersIncr;
-						}
-					}
+					size_t       streak[2]    = { calcMax(maxDpStreak,   maxStreakIncr), calcMax(maxDpStreak,   maxStreakIncr) };
+					const size_t mtStreak[2]  = { calcMax(maxMateStreak, maxStreakIncr), calcMax(maxMateStreak, maxStreakIncr) };
+					const size_t mxDp[2]      = { calcMax(maxDp,    maxItersIncr), calcMax(maxDp,    maxItersIncr) };
+					const size_t mxUg[2]      = { calcMax(maxUg,    maxItersIncr), calcMax(maxUg,    maxItersIncr) };
+					const size_t mxIter[2]    = { calcMax(maxIters, maxItersIncr), calcMax(maxIters, maxItersIncr) };
 					if(filt[0] && filt[1]) {
 						streak[0] = (size_t)ceil((double)streak[0] / 2.0);
 						streak[1] = (size_t)ceil((double)streak[1] / 2.0);
@@ -5189,26 +5172,11 @@ static void multiseedSearchWorker_2p5(void *vp) {
 				rnd.init(ROTL((rds[0]->seed ^ rds[1]->seed), 10));
 			}
 			// Calculate streak length
-			size_t streak[2]    = { maxDpStreak,   maxDpStreak };
-			size_t mtStreak[2]  = { maxMateStreak, maxMateStreak };
-			size_t mxDp[2]      = { maxDp,         maxDp       };
-			size_t mxUg[2]      = { maxUg,         maxUg       };
-			size_t mxIter[2]    = { maxIters,      maxIters    };
-			if(allHits) {
-				streak[0]   = streak[1]   = std::numeric_limits<size_t>::max();
-				mtStreak[0] = mtStreak[1] = std::numeric_limits<size_t>::max();
-				mxDp[0]     = mxDp[1]     = std::numeric_limits<size_t>::max();
-				mxUg[0]     = mxUg[1]     = std::numeric_limits<size_t>::max();
-				mxIter[0]   = mxIter[1]   = std::numeric_limits<size_t>::max();
-			} else if(khits > 1) {
-				for(size_t mate = 0; mate < 2; mate++) {
-					streak[mate]   += (khits-1) * maxStreakIncr;
-					mtStreak[mate] += (khits-1) * maxStreakIncr;
-					mxDp[mate]     += (khits-1) * maxItersIncr;
-					mxUg[mate]     += (khits-1) * maxItersIncr;
-					mxIter[mate]   += (khits-1) * maxItersIncr;
-				}
-			}
+			size_t       streak[2]    = { calcMax(maxDpStreak,   maxStreakIncr), calcMax(maxDpStreak,   maxStreakIncr) };
+			//const size_t mtStreak[2]  = { calcMax(maxMateStreak, maxStreakIncr), calcMax(maxMateStreak, maxStreakIncr) };
+			//const size_t mxDp[2]      = { calcMax(maxDp,    maxItersIncr), calcMax(maxDp,    maxItersIncr) };
+			//const size_t mxUg[2]      = { calcMax(maxUg,    maxItersIncr), calcMax(maxUg,    maxItersIncr) };
+			//const size_t mxIter[2]    = { calcMax(maxIters, maxItersIncr), calcMax(maxIters, maxItersIncr) };
 			// If paired-end and neither mate filtered...
 			if(filt[0] && filt[1]) {
 				// Reduce streaks for either mate
