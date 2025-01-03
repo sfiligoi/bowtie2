@@ -497,6 +497,7 @@ void SwDriver::prioritizeSATups(
 	bool lensq,                  // square length in weight calculation
 	bool szsq,                   // square range size in weight calculation
 	size_t nsm,                  // if range as <= nsm elts, it's "small"
+	size_t ncut,                 // if range as > ncut elts, filter it out
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
@@ -525,13 +526,14 @@ void SwDriver::prioritizeSATups(
 		ca.queryQval(qv, satups_, nrange, nelt);
 		for(size_t j = 0; j < satups_.size(); j++) {
 			const size_t sz = satups_[j].size();
+			// unconditionally skip when size too large
+			bool skip = (sz>ncut);
 			// Check whether this hit occurs inside the extended boundaries of
 			// another hit we already processed for this read.
-			if(seedmms == 0) {
+			if((!skip) && (seedmms == 0)) {
 				// See if we're covered by a previous extended seed hit
 				EList<ExtendRange>& range =
 					fw ? seedExRangeFw_[matei] : seedExRangeRc_[matei];
-				bool skip = false;
 				for(size_t k = 0; k < range.size(); k++) {
 					size_t p5 = range[k].off;
 					size_t len = range[k].len;
@@ -542,13 +544,13 @@ void SwDriver::prioritizeSATups(
 						}
 					}
 				}
-				if(skip) {
+			}
+			if(skip) {
 					assert_gt(nrange, 0);
 					nrange--;
 					assert_geq(nelt, sz);
 					nelt -= sz;
 					continue; // Skip this seed
-				}
 			}
 			satpos.expand();
 			satpos.back().sat = satups_[j];
@@ -858,6 +860,7 @@ int SwDriver::extendSeeds(
 					true,          // square extended length
 					true,          // square SA range size
 					nsm,           // smallness threshold
+					std::numeric_limits<size_t>::max(), // never filter by size
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -1374,6 +1377,7 @@ int SwDriver::extendSeedsNoEE(
 			true,          // square extended length
 			true,          // square SA range size
 			nsm,           // smallness threshold
+			std::numeric_limits<size_t>::max(), // never filter by size
 			ca,            // alignment cache for seed hits
 			rnd,           // pseudo-random generator
 			wlm,           // group walk left metrics
@@ -1976,6 +1980,7 @@ int SwDriver::extendSeedsPaired(
 					true,          // square extended length
 					true,          // square SA range size
 					nsm,           // smallness threshold
+					std::numeric_limits<size_t>::max(), // never filter by size
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -2938,6 +2943,7 @@ int SwDriver::extendSeedsPairedNoEE(
 			true,          // square extended length
 			true,          // square SA range size
 			nsm,           // smallness threshold
+			std::numeric_limits<size_t>::max(), // never filter by size
 			ca,            // alignment cache for seed hits
 			rnd,           // pseudo-random generator
 			wlm,           // group walk left metrics
