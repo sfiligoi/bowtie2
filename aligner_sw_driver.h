@@ -569,6 +569,7 @@ protected:
 		bool lensq,                  // square extended length
 		bool szsq,                   // square SA range size
 		size_t nsm,                  // if range as <= nsm elts, it's "small"
+		size_t ncut,                 // if range as > ncut elts, filter it out
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
