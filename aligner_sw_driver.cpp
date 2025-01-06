@@ -498,6 +498,7 @@ void SwDriver::prioritizeSATups(
 	bool szsq,                   // square range size in weight calculation
 	size_t nsm,                  // if range as <= nsm elts, it's "small"
 	size_t ncut,                 // if range as > ncut elts, filter it out
+	bool doRand,                 // use randomized selection? (false implies all elements)
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random generator
 	WalkMetrics& wlm,            // group walk left metrics
@@ -509,12 +510,13 @@ void SwDriver::prioritizeSATups(
 	const int matei = (read.mate <= 1 ? 0 : 1);
 	satups_.clear();
 	gws_.clear();
+	currIdx_.clear();
 	rands_.clear();
 	rands2_.clear();
 	satpos_.clear();
 	satpos2_.clear();
 	size_t nrange = 0, nelt = 0, nsmall = 0, nsmall_elts = 0;
-	bool keepWhole = false;
+	const bool keepWhole = false;
 	EList<SATupleAndPos, 16>& satpos = keepWhole ? satpos_ : satpos2_;
 	for(size_t i = 0; i < nonz; i++) {
 		bool fw = true;
@@ -607,6 +609,7 @@ void SwDriver::prioritizeSATups(
 	nelt_out = nelt; // return the total number of elements
 	assert_eq(nrange, satpos.size());
 	satpos.sort();
+#if 0
 	if(keepWhole) {
 		gws_.ensure(nrange);
 		rands_.ensure(nrange);
@@ -627,12 +630,18 @@ void SwDriver::prioritizeSATups(
 		}
 		return;
 	}
+#endif
 	// Resize satups_ list so that ranges having elements that we might
 	// possibly explore are present
 	satpos_.ensure(min(maxelt, nelt));
 	gws_.ensure(min(maxelt, nelt));
-	rands_.ensure(min(maxelt, nelt));
-	rands2_.ensure(min(maxelt, nelt));
+	if (doRand) {
+		rands_.ensure(min(maxelt, nelt));
+	} else {
+		currIdx_.ensure(min(maxelt, nelt));
+		nsmall = satpos2_.size(); // treat all elements as if they were short, no subsampling
+	}
+#if 0
 	size_t nlarge_elts = nelt - nsmall_elts;
 	if(maxelt < nelt) {
 		size_t diff = nelt - maxelt;
@@ -642,6 +651,8 @@ void SwDriver::prioritizeSATups(
 			nlarge_elts -= diff;
 		}
 	}
+#endif
+
 	size_t nelt_added = 0;
 	// Now we have a collection of ranges in satpos2_.  Now we want to decide
 	// how we explore elements from them.  The basic idea is that: for very
@@ -651,7 +662,7 @@ void SwDriver::prioritizeSATups(
 	// random, and (b) weighted toward examining elements from the smaller
 	// ranges more frequently (and first).
 	//
-	// 1. do the smalls
+	// 1. do the smalls (or all if doRand==false)
 	for(size_t j = 0; j < nsmall && nelt_added < maxelt; j++) {
 		satpos_.expand();
 		satpos_.back() = satpos2_[j];
@@ -666,8 +677,13 @@ void SwDriver::prioritizeSATups(
 			sa,     // SA tuples: ref hit, salist range
 			wlm);   // metrics
 		assert(gws_.back().initialized());
-		rands_.expand();
-		rands_.back().init(satpos_.back().sat.size(), all);
+		if (doRand) {
+			rands_.expand();
+			rands_.back().init(satpos_.back().sat.size(), all);
+		} else {
+			currIdx_.expand();
+			currIdx_.back() = 0;
+		}
 		nelt_added += satpos_.back().sat.size();
 #ifndef NDEBUG
 		for(size_t k = 0; k < satpos_.size()-1; k++) {
@@ -679,6 +695,10 @@ void SwDriver::prioritizeSATups(
 		nelt_out = nelt_added;
 		return;
 	}
+
+	// Note: Can only get here if doRand==true
+	rands2_.ensure(min(maxelt, nelt));
+	
 	// 2. do the non-smalls
 	// Initialize the row sampler
 	rowsamp_.init(satpos2_, nsmall, satpos2_.size(), lensq, szsq);
@@ -861,6 +881,7 @@ int SwDriver::extendSeeds(
 					true,          // square SA range size
 					nsm,           // smallness threshold
 					std::numeric_limits<size_t>::max(), // never filter by size
+					true,          // use random subsampling
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -1321,6 +1342,8 @@ int SwDriver::extendSeedsNoEE(
 	size_t cminlen,              // use checkpointer if read longer than this
 	size_t cpow2,                // interval between diagonals to checkpoint
 	bool doTri,                  // triangular mini-fills?
+	size_t ncut,                 // if range as > ncut elts, filter it out
+	bool doRand,                 // use randomized selection? (false implies all elements)
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random source
 	WalkMetrics& wlm,            // group walk left metrics
@@ -1377,39 +1400,45 @@ int SwDriver::extendSeedsNoEE(
 			true,          // square extended length
 			true,          // square SA range size
 			nsm,           // smallness threshold
-			std::numeric_limits<size_t>::max(), // never filter by size
+			ncut,          // if range as > ncut elts, filter it out
+			doRand,        // use randomized selection? (false implies all elements)
 			ca,            // alignment cache for seed hits
 			rnd,           // pseudo-random generator
 			wlm,           // group walk left metrics
 			prm,           // per-read metrics
 			nelt,          // out: # elements total
 			all);          // report all hits?
-		assert_eq(gws_.size(), rands_.size());
 		assert_eq(gws_.size(), satpos_.size());
+		assert_eq(doRand?rands_.size():currIdx_, satpos_.size());
 		neltLeft = nelt;
 	}
+	const size_t n_satpos = satpos_.size();
 	while(neltLeft>0) {
 		if(minsc == perfectScore) {
 				return EXTEND_PERFECT_SCORE; // Already found all perfect hits!
 		}
-		for(size_t i = 0; i < gws_.size(); i++) {
-			bool is_small       = satpos_[i].sat.size() < nsm;
-			bool fw             = satpos_[i].pos.fw;
-			uint32_t rdoff      = satpos_[i].pos.rdoff;
-			uint32_t seedhitlen = satpos_[i].pos.seedlen;
+		for(size_t i = 0; i < n_satpos; i++) {
+			const SATupleAndPos& satpos = satpos_[i];
+			const size_t sat_size     = satpos.sat.size();
+			const bool is_small       = sat_size < nsm;
+			const bool fw             = satpos.pos.fw;
+			uint32_t rdoff      = satpos.pos.rdoff;
+			uint32_t seedhitlen = satpos.pos.seedlen;
 			if(!fw) {
 				// 'rdoff' and 'offidx' are with respect to the 5' end of
 				// the read.  Here we convert rdoff to be with respect to
 				// the upstream (3') end of ther read.
 				rdoff = (uint32_t)(rdlen - rdoff - seedhitlen);
 			}
+			auto& gws = gws_[i];
 			bool first = true;
 			// If the range is small, investigate all elements now.  If the
 			// range is large, just investigate one and move on - we might come
 			// back to this range later.
 			size_t riter = 0;
-			while(!rands_[i].done() && (first || is_small)) {
-				assert(!gws_[i].done());
+			while( ( doRand ? (!rands_[i].done()) : (currIdx_[i]<sat_size) ) && 
+			       (first || is_small ) ) {
+				assert(!gws.done());
 				riter++;
 				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
@@ -1424,13 +1453,13 @@ int SwDriver::extendSeedsNoEE(
 				first = false;
 				// Resolve next element offset
 				WalkResult wr;
-				size_t elt = rands_[i].next(rnd);
+				size_t elt = doRand ? rands_[i].next(rnd) : (currIdx_[i]++);
 				//cerr << "elt=" << elt << endl;
 				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_[i].sat.topf;
-				sa.len = satpos_[i].sat.key.len;
-				sa.offs = satpos_[i].sat.offs;
-				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				sa.topf = satpos.sat.topf;
+				sa.len = satpos.sat.key.len;
+				sa.offs = satpos.sat.offs;
+				gws.advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
@@ -1452,7 +1481,7 @@ int SwDriver::extendSeedsNoEE(
 				}
 #ifndef NDEBUG
 				if(!straddled) { // Check that seed hit matches reference
-					uint64_t key = satpos_[i].sat.key.seq;
+					uint64_t key = satpos.sat.key.seq;
 					for(size_t k = 0; k < wr.elt.len; k++) {
 						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
 						assert_leq(c, 3);
@@ -1719,7 +1748,7 @@ int SwDriver::extendSeedsNoEE(
 				// continue to resolve seed hits.  
 
 			} // while(!gws_[i].done())
-		}
+		} // end for(size_t i = 0; i < n_satpos; i++)
 	}
 	// Short-circuited because a limit, e.g. -k, -m or -M, was exceeded
 	return EXTEND_EXHAUSTED_CANDIDATES;
@@ -1981,6 +2010,7 @@ int SwDriver::extendSeedsPaired(
 					true,          // square SA range size
 					nsm,           // smallness threshold
 					std::numeric_limits<size_t>::max(), // never filter by size
+					true,          // use random subsampling
 					ca,            // alignment cache for seed hits
 					rnd,           // pseudo-random generator
 					wlm,           // group walk left metrics
@@ -2869,6 +2899,8 @@ int SwDriver::extendSeedsPairedNoEE(
 	size_t cminlen,              // use checkpointer if read longer than this
 	size_t cpow2,                // interval between diagonals to checkpoint
 	bool doTri,                  // triangular mini-fills?
+	size_t ncut,                 // if range as > ncut elts, filter it out
+	bool doRand,                 // use randomized selection? (false implies all elements)
 	AlignmentCacheIface& ca,     // alignment cache for seed hits
 	RandomSource& rnd,           // pseudo-random source
 	WalkMetrics& wlm,            // group walk left metrics
@@ -2943,37 +2975,43 @@ int SwDriver::extendSeedsPairedNoEE(
 			true,          // square extended length
 			true,          // square SA range size
 			nsm,           // smallness threshold
-			std::numeric_limits<size_t>::max(), // never filter by size
+			ncut,          // if range as > ncut elts, filter it out
+			doRand,        // use randomized selection? (false implies all elements)
 			ca,            // alignment cache for seed hits
 			rnd,           // pseudo-random generator
 			wlm,           // group walk left metrics
 			prm,           // per-read metrics
 			nelt,          // out: # elements total
 			all);          // report all hits?
-		assert_eq(gws_.size(), rands_.size());
 		assert_eq(gws_.size(), satpos_.size());
+		assert_eq(doRand?rands_.size():currIdx_, satpos_.size());
 		neltLeft = nelt;
 		mateStreaks_.resize(gws_.size());
 		mateStreaks_.fill(0);
 	}
 
+	const size_t n_satpos = satpos_.size();
 	while(neltLeft>0) {
-		for(size_t i = 0; i < gws_.size(); i++) {
-			bool is_small       = satpos_[i].sat.size() < nsm;
-			bool fw             = satpos_[i].pos.fw;
-			uint32_t rdoff      = satpos_[i].pos.rdoff;
-			uint32_t seedhitlen = satpos_[i].pos.seedlen;
+		for(size_t i = 0; i < n_satpos; i++) {
+			const SATupleAndPos& satpos = satpos_[i];
+			const size_t sat_size     = satpos.sat.size();
+			const bool is_small       = sat_size < nsm;
+			const bool fw             = satpos.pos.fw;
+			uint32_t rdoff      = satpos.pos.rdoff;
+			uint32_t seedhitlen = satpos.pos.seedlen;
 			if(!fw) {
 				// 'rdoff' and 'offidx' are with respect to the 5' end of
 				// the read.  Here we convert rdoff to be with respect to
 				// the upstream (3') end of ther read.
 				rdoff = (uint32_t)(rdlen - rdoff - seedhitlen);
 			}
+			auto& gws = gws_[i];
 			bool first = true;
 			// If the range is small, investigate all elements now.  If the
 			// range is large, just investigate one and move on - we might come
 			// back to this range later.
-			while(!rands_[i].done() && (first || is_small )) {
+			while( ( doRand ? (!rands_[i].done()) : (currIdx_[i]<sat_size) ) && 
+			       (first || is_small ) ) {
 				if(prm.nExDps >= maxDp || prm.nMateDps >= maxDp) {
 					return EXTEND_EXCEEDED_HARD_LIMIT;
 				}
@@ -2997,15 +3035,15 @@ int SwDriver::extendSeedsPairedNoEE(
 				}
 				prm.nExIters++;
 				first = false;
-				assert(!gws_[i].done());
+				assert(!gws.done());
 				// Resolve next element offset
 				WalkResult wr;
-				size_t elt = rands_[i].next(rnd);
+				size_t elt = doRand ? rands_[i].next(rnd) : (currIdx_[i]++);
 				SARangeWithOffs<TSlice> sa;
-				sa.topf = satpos_[i].sat.topf;
-				sa.len = satpos_[i].sat.key.len;
-				sa.offs = satpos_[i].sat.offs;
-				gws_[i].advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
+				sa.topf = satpos.sat.topf;
+				sa.len = satpos.sat.key.len;
+				sa.offs = satpos.sat.offs;
+				gws.advanceElement((TIndexOffU)elt, ebwtFw, ref, sa, gwstate_, wr, wlm, prm);
 				eltsDone++;
 				assert_gt(neltLeft, 0);
 				neltLeft--;
@@ -3027,7 +3065,7 @@ int SwDriver::extendSeedsPairedNoEE(
 				}
 #ifndef NDEBUG
 				if(!straddled) { // Check that seed hit matches reference
-					uint64_t key = satpos_[i].sat.key.seq;
+					uint64_t key = satpos.sat.key.seq;
 					for(size_t k = 0; k < wr.elt.len; k++) {
 						int c = ref.getBase(tidx, toff + wr.elt.len - k - 1);
 						assert_leq(c, 3);
@@ -3656,7 +3694,7 @@ int SwDriver::extendSeedsPairedNoEE(
 				// At this point we know that we aren't bailing, and will continue to resolve seed hits.  
 
 			} // while(!gw.done())
-		} // for(size_t i = 0; i < gws_.size(); i++)
+		} // for(size_t i = 0; i < n_satpos; i++)
 	}
 	return EXTEND_EXHAUSTED_CANDIDATES;
 }
