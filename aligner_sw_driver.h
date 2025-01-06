@@ -383,6 +383,8 @@ public:
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
+		size_t ncut,                 // if range as > ncut elts, filter it out
+		bool doRand,                 // use randomized selection? (false implies all elements)
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
@@ -491,6 +493,8 @@ public:
 		size_t cminlen,              // use checkpointer if read longer than this
 		size_t cpow2,                // interval between diagonals to checkpoint
 		bool doTri,                  // triangular mini-fills
+		size_t ncut,                 // if range as > ncut elts, filter it out
+		bool doRand,                 // use randomized selection? (false implies all elements)
 		AlignmentCacheIface& cs,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random source
 		WalkMetrics& wlm,            // group walk left metrics
@@ -570,6 +574,7 @@ protected:
 		bool szsq,                   // square SA range size
 		size_t nsm,                  // if range as <= nsm elts, it's "small"
 		size_t ncut,                 // if range as > ncut elts, filter it out
+		bool doRand,                 // use randomized selection? (false implies all elements)
 		AlignmentCacheIface& ca,     // alignment cache for seed hits
 		RandomSource& rnd,           // pseudo-random generator
 		WalkMetrics& wlm,            // group walk left metrics
@@ -578,7 +583,7 @@ protected:
 		bool all);                   // report all hits?
 
 	Random1toN               rand_;    // random number generators
-	EList<Random1toN, 16>    rands_;   // random number generators
+	EList<Random1toN, 16>    rands_;   // random number generators (alternative to currIdx_)
 	EList<Random1toN, 16>    rands2_;  // random number generators
 	EList<EEHit, 16>         eehits_;  // holds end-to-end hits
 	EList<SATupleAndPos, 16> satpos_;  // holds SATuple, SeedPos pairs
@@ -586,6 +591,7 @@ protected:
 	EList<SATuple, 16>       satups_;  // holds SATuples to explore elements from
 	EList<GroupWalk2S<TSlice, 16> > gws_;   // list of GroupWalks; no particular order
 	EList<size_t>            mateStreaks_; // mate-find fail streaks
+	EList<size_t>            currIdx_;     // current index (alternative to rands_)s
 	RowSampler               rowsamp_;     // row sampler
 	
 	// Ranges that we've extended through when extending seed hits

@@ -4734,6 +4734,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
+										std::numeric_limits<size_t>::max(), // never filter by size
+										true,          // use random subsampling
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
@@ -4775,6 +4777,8 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
+										std::numeric_limits<size_t>::max(), // never filter by size
+										true,          // use random subsampling
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
