@@ -85,6 +85,7 @@ static string metricsFile;// output file to put alignment metrics in
 static bool metricsStderr;// output file to put alignment metrics in
 static bool metricsPerRead; // report a metrics tuple for every read
 static bool allHits;      // for multihits, report just one
+static bool deterministicSeeds;      // for low quality seeds, enable subsampling
 static bool showVersion;  // just print version and quit?
 static int ipause;        // pause before maching?
 static uint64_t qUpto;    // max # of queries to read
@@ -298,6 +299,7 @@ static void resetOptions() {
 	metricsStderr       = false;	// print metrics to stderr (in addition to --metrics-file if it's specified
 	metricsPerRead      = false;	// report a metrics tuple for every read?
 	allHits		    = false;	// for multihits, report just one
+	deterministicSeeds  = false;    // for low quality seeds, enable subsampling
 	showVersion	    = false;	// just print version and quit?
 	ipause		    = 0;	// pause before maching?
 	qUpto               = 0xffffffffffffffff; // max # of queries to read
@@ -478,7 +480,7 @@ static void resetOptions() {
 #endif
 }
 
-static const char *short_options = "bfF:qbzhcu:rv:s:aP:t3:5:w:p:k:l:M:1:2:I:X:CQ:N:i:L:U:x:S:g:O:D:R:";
+static const char *short_options = "bfF:qbzhcu:rv:s:adP:t3:5:w:p:k:l:M:1:2:I:X:CQ:N:i:L:U:x:S:g:O:D:R:";
 
 static struct option long_options[] = {
 	{(char*)"verbose",                     no_argument,        0,                   ARG_VERBOSE},
@@ -629,6 +631,8 @@ static struct option long_options[] = {
 	{(char*)"no-exact-upfront",            no_argument,        0,                   ARG_EXACT_UPFRONT_NO},
 	{(char*)"no-1mm-upfront",              no_argument,        0,                   ARG_1MM_UPFRONT_NO},
 	{(char*)"1mm-minlen",                  required_argument,  0,                   ARG_1MM_MINLEN},
+	{(char*)"deterministic-seeds",         no_argument,        0,                   'd'},
+	{(char*)"no-deterministic-seeds",      no_argument,        0,                   ARG_DET_SEEDS_NO},
 	{(char*)"seed-off",                    required_argument,  0,                   'O'},
 	{(char*)"seed-boost",                  required_argument,  0,                   ARG_SEED_BOOST_THRESH},
 	{(char*)"read-times",                  no_argument,        0,                   ARG_READ_TIMES},
@@ -827,12 +831,14 @@ static void printUsage(ostream& out) {
 	    << "   OR" << endl
 	    << "  -k <int>           report up to <int> alns per read; MAPQ not meaningful" << endl
 	    << "   OR" << endl
-	    << "  -a/--all           report all alignments; very slow, MAPQ not meaningful" << endl
+	    << "  -a/--all           report all alignments; very slow without -l, MAPQ not meaningful" << endl
 	    << endl
 	    << " Effort:" << endl
 	    << "  -l/--lowseeds <n>  ignore any low quality seeds with ranges over threshold (0=no cut)" << endl
 	    << "  -D <int>           give up extending after <int> failed extends in a row (15)" << endl
 	    << "  -R <int>           for reads w/ repetitive seeds, try <int> sets of seeds (2)" << endl
+	    << "  -d/--deterministic-seeds" << endl
+	    << "                     Consider all seeds in order (no subsampling, best with -a)" << endl
 	    << endl
 	    << " Paired-end:" << endl
 	    << "  -I/--minins <int>  minimum fragment length (0)" << endl
@@ -1294,6 +1300,8 @@ static void parseOption(int next_option, const char *arg) {
 		lowseeds = parse<size_t>(arg);
 		break;
 	}
+	case 'd': deterministicSeeds = true; break;
+	case ARG_DET_SEEDS_NO: deterministicSeeds = false; break;
 	case ARG_VERBOSE: gVerbose = 1; break;
 	case ARG_STARTVERBOSE: startVerbose = true; break;
 	case ARG_QUIET: gQuiet = true; break;
@@ -1717,6 +1725,10 @@ static void parseOptions(int argc, const char **argv) {
 	if ( ( (!doExactUpFront) && (!do1mmUpFront) && (mhits==0))==false) {
 		if (lowseeds>0) {
 			cerr << "Error -l cannot be used with --exact-upfront, --1mm-upfront or -m  " << endl;
+			throw 1;
+		}
+		if (deterministicSeeds) {
+			cerr << "Error -d cannot be used with --exact-upfront, --1mm-upfront or -m  " << endl;
 			throw 1;
 		}
 	}
@@ -4754,7 +4766,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										lowseeds_ncut,  // if range as > ncut elts, filter it out
-										true,          // use random subsampling
+										!deterministicSeeds,  // use random subsampling?
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
@@ -4797,7 +4809,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
 										lowseeds_ncut,  // if range as > ncut elts, filter it out
-										true,          // use random subsampling
+										!deterministicSeeds,  // use random subsampling?
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
 										wlm,            // group walk left metrics
