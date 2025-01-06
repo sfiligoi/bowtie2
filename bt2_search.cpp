@@ -101,6 +101,7 @@ static string thread_stealing_dir; // keep track of pids in this directory
 static bool thread_stealing;// true iff thread stealing is in use
 static int outType;       // style of output
 static bool noRefNames;   // true -> print reference indexes; not names
+static uint32_t lowseeds; // size of seed range above which a seed is considered low quality, and thus discarded (0 disables the cut)
 static uint32_t khits;    // number of hits per read; >1 is much slower
 static uint32_t mhits;    // don't report any hits if there are > mhits
 static int partitionSz;   // output a partitioning key in first field
@@ -314,6 +315,7 @@ static void resetOptions() {
 	FNAME_SIZE	    = 4096;
 	outType		    = OUTPUT_SAM;	// style of output
 	noRefNames	    = false;	// true -> print reference indexes; not names
+	lowseeds	    = 0;	// size of seed range above which a seed is considered low quality, and thus discarded (0 disables the cut)
 	khits		    = 1;	// number of hits per read; >1 is much slower
 	mhits		    = 50;	// stop after finding this many alignments+1
 	partitionSz	    = 0;	// output a partitioning key in first field
@@ -476,7 +478,7 @@ static void resetOptions() {
 #endif
 }
 
-static const char *short_options = "bfF:qbzhcu:rv:s:aP:t3:5:w:p:k:M:1:2:I:X:CQ:N:i:L:U:x:S:g:O:D:R:";
+static const char *short_options = "bfF:qbzhcu:rv:s:aP:t3:5:w:p:k:l:M:1:2:I:X:CQ:N:i:L:U:x:S:g:O:D:R:";
 
 static struct option long_options[] = {
 	{(char*)"verbose",                     no_argument,        0,                   ARG_VERBOSE},
@@ -509,6 +511,7 @@ static struct option long_options[] = {
 	{(char*)"help",                        no_argument,        0,                   'h'},
 	{(char*)"threads",                     required_argument,  0,                   'p'},
 	{(char*)"khits",                       required_argument,  0,                   'k'},
+	{(char*)"lowseeds",                    required_argument,  0,                   'l'},
 	{(char*)"minins",                      required_argument,  0,                   'I'},
 	{(char*)"maxins",                      required_argument,  0,                   'X'},
 	{(char*)"quals",                       required_argument,  0,                   'Q'},
@@ -827,6 +830,7 @@ static void printUsage(ostream& out) {
 	    << "  -a/--all           report all alignments; very slow, MAPQ not meaningful" << endl
 	    << endl
 	    << " Effort:" << endl
+	    << "  -l/--lowseeds <n>  ignore any low quality seeds with ranges over threshold (0=no cut)" << endl
 	    << "  -D <int>           give up extending after <int> failed extends in a row (15)" << endl
 	    << "  -R <int>           for reads w/ repetitive seeds, try <int> sets of seeds (2)" << endl
 	    << endl
@@ -1286,6 +1290,10 @@ static void parseOption(int next_option, const char *arg) {
 		saw_k = true;
 		break;
 	}
+	case 'l': {
+		lowseeds = parse<size_t>(arg);
+		break;
+	}
 	case ARG_VERBOSE: gVerbose = 1; break;
 	case ARG_STARTVERBOSE: startVerbose = true; break;
 	case ARG_QUIET: gQuiet = true; break;
@@ -1706,6 +1714,13 @@ static void parseOptions(int argc, const char **argv) {
 		assert_gt(mhits, 0);
 		msample = true;
 	}
+	if ( ( (!doExactUpFront) && (!do1mmUpFront) && (mhits==0))==false) {
+		if (lowseeds>0) {
+			cerr << "Error -l cannot be used with --exact-upfront, --1mm-upfront or -m  " << endl;
+			throw 1;
+		}
+	}
+
 	if (format == UNKNOWN)
 		set_format(format, FASTQ);
 	if(mates1.size() != mates2.size()) {
@@ -4316,6 +4331,10 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 		const size_t mxUg      = calcMax(maxUg,    maxItersIncr);
 		const size_t mxIter    = calcMax(maxIters, maxItersIncr);
 
+		const size_t lowseeds_ncut = (lowseeds>0) ? 
+			lowseeds : 
+			std::numeric_limits<size_t>::max(); // never filter by size
+
 		rndArb.init((uint32_t)time(0));
 		int mergei = 0;
 		int mergeival = 16;
@@ -4734,7 +4753,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
-										std::numeric_limits<size_t>::max(), // never filter by size
+										lowseeds_ncut,  // if range as > ncut elts, filter it out
 										true,          // use random subsampling
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
@@ -4777,7 +4796,7 @@ static void multiseedSearchWorkerNoUpfront(void *vp) {
 										cminlen,        // checkpoint if read is longer
 										cpow2,          // checkpointer interval, log2
 										doTri,          // triangular mini-fills?
-										std::numeric_limits<size_t>::max(), // never filter by size
+										lowseeds_ncut,  // if range as > ncut elts, filter it out
 										true,          // use random subsampling
 										ca,             // seed alignment cache
 										rnd,            // pseudo-random source
