@@ -1420,7 +1420,8 @@ int SwDriver::extendSeedsNoEE(
 		for(size_t i = 0; i < n_satpos; i++) {
 			const SATupleAndPos& satpos = satpos_[i];
 			const size_t sat_size     = satpos.sat.size();
-			const bool is_small       = sat_size < nsm;
+			// when we are not subsampling(doRand), treat them all as if they were small
+			const bool is_small       = doRand ? (sat_size < nsm) : true;
 			const bool fw             = satpos.pos.fw;
 			uint32_t rdoff      = satpos.pos.rdoff;
 			uint32_t seedhitlen = satpos.pos.seedlen;
@@ -2995,7 +2996,8 @@ int SwDriver::extendSeedsPairedNoEE(
 		for(size_t i = 0; i < n_satpos; i++) {
 			const SATupleAndPos& satpos = satpos_[i];
 			const size_t sat_size     = satpos.sat.size();
-			const bool is_small       = sat_size < nsm;
+			// when we are not subsampling(doRand), treat them all as if they were small
+			const bool is_small       = doRand ? (sat_size < nsm) : true;
 			const bool fw             = satpos.pos.fw;
 			uint32_t rdoff      = satpos.pos.rdoff;
 			uint32_t seedhitlen = satpos.pos.seedlen;
